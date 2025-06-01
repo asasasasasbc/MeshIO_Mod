@@ -5,47 +5,35 @@ using System.Linq;
 using System.Reflection;
 using MeshIO.FBX.Connections;
 using MeshIO.FBX.Templates;
-using MeshIO.Entities.Skinning; // Added for Skin, Cluster
-using MeshIO.Entities.Geometries; // Added for Geometry
+using MeshIO.Entities.Skinning;
+using MeshIO.Entities.Geometries;
+using MeshIO.Entities;
+using MeshIO.Utils;
+using CSMath; // For Matrix4
 
 namespace MeshIO.FBX.Writers
 {
     internal abstract class FbxFileWriterBase
     {
         public FbxVersion Version { get { return this.Options.Version; } }
-
         public FbxWriterOptions Options { get; }
-
         public Scene Scene { get; }
-
         public Node RootNode { get { return this.Scene.RootNode; } }
 
         protected readonly Dictionary<string, FbxPropertyTemplate> _tempaltes = new();
-
         protected readonly Dictionary<string, List<IFbxObjectTemplate>> _definedObjects = new();
-
         protected readonly Dictionary<ulong, IFbxObjectTemplate> _objectTemplates = new();
-
         protected readonly List<FbxConnection> _connections = new();
 
         private readonly FbxRootNode fbxRoot;
-
         private readonly string MeshIOVersion;
-
-        // To prevent recursion during EnsureFbxObjectCreated
         private readonly HashSet<ulong> _currentlyProcessingForCreation = new HashSet<ulong>();
-
 
         protected FbxFileWriterBase(Scene scene, FbxWriterOptions options)
         {
             this.Scene = scene;
             this.Options = options;
-
-            this.fbxRoot = new FbxRootNode
-            {
-                Version = this.Options.Version
-            };
-
+            this.fbxRoot = new FbxRootNode { Version = this.Options.Version };
             this.MeshIOVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString();
         }
 
@@ -82,10 +70,9 @@ namespace MeshIO.FBX.Writers
 
         public FbxRootNode ToNodeStructure()
         {
-            this.initializeRoot(); // This will populate _definedObjects and _objectTemplates through EnsureFbxObjectCreated
+            this.initializeRoot();
 
             this.fbxRoot.Nodes.Add(this.nodeFBXHeaderExtension());
-
             if (this.Options.IsBinaryFormat)
             {
                 byte[] id = new byte[16];
@@ -95,14 +82,13 @@ namespace MeshIO.FBX.Writers
                 this.fbxRoot.Add("CreationTime", DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss:fff", CultureInfo.InvariantCulture));
                 this.fbxRoot.Add("Creator", $"MeshIO.FBX {this.MeshIOVersion}");
             }
-
             this.fbxRoot.Nodes.Add(this.nodeGlobalSettings());
             this.fbxRoot.Nodes.Add(this.nodeDocuments());
             this.fbxRoot.Nodes.Add(this.nodeReferences());
-            this.fbxRoot.Nodes.Add(this.nodeDefinitions()); // Must be called after initializeRoot populates _definedObjects
+            this.fbxRoot.Nodes.Add(this.nodeDefinitions());
+            this.fbxRoot.Nodes.Add(this.nodePoses());
             this.fbxRoot.Nodes.Add(this.nodeObjects());
             this.fbxRoot.Nodes.Add(this.nodeConnections());
-
             return this.fbxRoot;
         }
 
@@ -111,154 +97,116 @@ namespace MeshIO.FBX.Writers
             return this._tempaltes.TryGetValue(fbxName, out template);
         }
 
-        /// <summary>
-        /// Ensures that an FBX object template for the given Element3D is created,
-        /// added to the internal tracking dictionaries (_objectTemplates, _definedObjects),
-        /// and its children are processed. This is the primary method for building the object hierarchy.
-        /// </summary>
         public void EnsureFbxObjectCreated(Element3D element)
         {
-            if (element == null || !element.Id.HasValue)
-            {
-                // Console.WriteLine($"Warning: EnsureFbxObjectCreated skipped for null element or element without ID.");
-                return;
-            }
-
+            if (element == null || !element.Id.HasValue) return;
             ulong elementId = element.Id.Value;
-
-            // If already fully processed and in _objectTemplates, nothing more to do.
-            if (_objectTemplates.ContainsKey(elementId))
-            {
-                return;
-            }
-
-            // Prevent recursion: if we are already in the process of creating this specific element, stop.
-            if (_currentlyProcessingForCreation.Contains(elementId))
-            {
-                // Console.WriteLine($"Debug: EnsureFbxObjectCreated - Recursion prevented for element ID {elementId} ({element.Name}).");
-                return;
-            }
+            if (_objectTemplates.ContainsKey(elementId)) return;
+            if (_currentlyProcessingForCreation.Contains(elementId)) return;
             _currentlyProcessingForCreation.Add(elementId);
-            // Console.WriteLine($"Debug: EnsureFbxObjectCreated - Starting processing for element ID {elementId} ({element.Name}, Type: {element.GetType().Name}).");
-
-
             IFbxObjectTemplate objTemplate = FbxTemplateFactory.Create(element);
             if (objTemplate == null)
             {
-                // Console.WriteLine($"Warning: No FBX template found for element type {element.GetType().FullName}. Element: {element.Name}, ID: {elementId}");
                 _currentlyProcessingForCreation.Remove(elementId);
                 return;
             }
-
-            // Add to _objectTemplates so it's available for connections *during* its own ProcessChildren call.
             _objectTemplates.Add(elementId, objTemplate);
-
-            // Add to _definedObjects for the "Definitions" section.
             if (!_definedObjects.TryGetValue(objTemplate.FbxObjectName, out List<IFbxObjectTemplate> fbxObjectList))
             {
                 fbxObjectList = new List<IFbxObjectTemplate>();
                 _definedObjects.Add(objTemplate.FbxObjectName, fbxObjectList);
             }
-            if (!fbxObjectList.Contains(objTemplate)) // Ensure not to add duplicates if called multiple times
-            {
-                fbxObjectList.Add(objTemplate);
-            }
-
-            // Console.WriteLine($"  Added to _objectTemplates and _definedObjects: '{element.Name}' (ID: {elementId}), FbxObjectName: {objTemplate.FbxObjectName}");
-
-            // Recursively process children of this element. This will call EnsureFbxObjectCreated for children.
+            if (!fbxObjectList.Contains(objTemplate)) fbxObjectList.Add(objTemplate);
             objTemplate.ProcessChildren(this);
-
-            // Console.WriteLine($"Debug: EnsureFbxObjectCreated - Finished processing for element ID {elementId} ({element.Name}).");
             _currentlyProcessingForCreation.Remove(elementId);
         }
 
-
-        /// <summary>
-        /// Creates a hierarchical connection (e.g., Node to child Node/Bone).
-        /// Assumes the parentFbxTemplate is already known and being processed.
-        /// Ensures the childElement is created as an FBX object.
-        /// </summary>
-        public void CreateHierarchicalConnection(Element3D childElement, IFbxObjectTemplate parentFbxTemplate)
+        // Generic internal method to add connections
+        // childElement_FBXSource becomes FBX Source, parentElement_FBXDestination becomes FBX Destination
+        private void AddConnection(Element3D childElement_FBXSource, Element3D parentElement_FBXDestination, FbxConnectionType type, string propertyName = null)
         {
-            if (childElement == null || !childElement.Id.HasValue || parentFbxTemplate == null)
+            if (childElement_FBXSource == null || !childElement_FBXSource.Id.HasValue ||
+                parentElement_FBXDestination == null || !parentElement_FBXDestination.Id.HasValue)
             {
-                // Console.WriteLine($"Warning: CreateHierarchicalConnection skipped due to null child/parent or missing ID. Child: {childElement?.Name}, Parent: {parentFbxTemplate?.Name}");
+                // Console.WriteLine($"Warning: AddConnection ({type}) skipped due to null element or ID. Child(Source): {childElement_FBXSource?.Name}, Parent(Dest): {parentElement_FBXDestination?.Name}");
                 return;
             }
-            // Console.WriteLine($"CreateHierarchicalConnection: Child='{childElement.Name}' (ID:{childElement.Id.Value}), Parent='{parentFbxTemplate.Name}' (ID:{parentFbxTemplate.Id})");
 
+            EnsureFbxObjectCreated(childElement_FBXSource);
+            EnsureFbxObjectCreated(parentElement_FBXDestination);
 
-            EnsureFbxObjectCreated(childElement); // This will create childFbx if not exists and process its children.
-
-            if (_objectTemplates.TryGetValue(childElement.Id.Value, out IFbxObjectTemplate childFbx))
+            if (_objectTemplates.TryGetValue(childElement_FBXSource.Id.Value, out IFbxObjectTemplate childFbx_SourceTemplate) &&
+                _objectTemplates.TryGetValue(parentElement_FBXDestination.Id.Value, out IFbxObjectTemplate parentFbx_DestinationTemplate))
             {
-                // Console.WriteLine($"  Found childFbx: {childFbx.Name}, ParentFbx: {parentFbxTemplate.Name}");
-                FbxConnection conn = new FbxConnection(childFbx, parentFbxTemplate);
-                this._connections.Add(conn);
-                // Console.WriteLine($"    Added OO Connection: {childFbx.Name} ({childFbx.Id}) -> {parentFbxTemplate.Name} ({parentFbxTemplate.Id})");
+                _connections.Add(new FbxConnection(childFbx_SourceTemplate, parentFbx_DestinationTemplate, type, propertyName));
+                // Console.WriteLine($"    Added Connection ({type}): {childFbx_SourceTemplate.Name} ({childFbx_SourceTemplate.Id}) [Source] -> {parentFbx_DestinationTemplate.Name} ({parentFbx_DestinationTemplate.Id}) [Dest]");
             }
             else
             {
-                // Console.WriteLine($"Error: CreateHierarchicalConnection - Child FBX template for '{childElement.Name}' (ID {childElement.Id.Value}) not found after Ensure. Parent: {parentFbxTemplate.Name}");
+                // string childStatus = _objectTemplates.ContainsKey(childElement_FBXSource.Id.Value) ? "found" : "NOT FOUND";
+                // string parentStatus = _objectTemplates.ContainsKey(parentElement_FBXDestination.Id.Value) ? "found" : "NOT FOUND";
+                // Console.WriteLine($"Error: AddConnection ({type}) - Could not create. Child '{childElement_FBXSource.Name}' ({childElement_FBXSource.Id.Value}) status: {childStatus}. Parent '{parentElement_FBXDestination.Name}' ({parentElement_FBXDestination.Id.Value}) status: {parentStatus}.");
             }
         }
 
-        /// <summary>
-        /// Creates an Object-Object (OO) connection between two arbitrary Element3D instances.
-        /// Ensures both elements are created as FBX objects before attempting to connect.
-        /// </summary>
-        public void AddConnectionOO(Element3D childElement, Element3D parentElement)
+        public void CreateHierarchicalConnection(Element3D childNodeElement, IFbxObjectTemplate parentNodeFbxTemplate)
         {
-            if (childElement == null || !childElement.Id.HasValue || parentElement == null || !parentElement.Id.HasValue)
+            if (childNodeElement == null || !childNodeElement.Id.HasValue || parentNodeFbxTemplate == null) return;
+            EnsureFbxObjectCreated(childNodeElement);
+            if (_objectTemplates.TryGetValue(childNodeElement.Id.Value, out IFbxObjectTemplate childFbx))
             {
-                // Console.WriteLine($"Warning: AddConnectionOO skipped due to null element or ID. Child: {childElement?.Name}, Parent: {parentElement?.Name}");
-                return;
+                // Hierarchical: Child Node (Source) -> Parent Node (Destination)
+                _connections.Add(new FbxConnection(childFbx, parentNodeFbxTemplate, FbxConnectionType.ObjectObject));
             }
-            // Console.WriteLine($"AddConnectionOO: Child='{childElement.Name}' (ID:{childElement.Id.Value}), Parent='{parentElement.Name}' (ID:{parentElement.Id.Value})");
+        }
 
+        // Standard Object-Object (e.g., Model -> Geometry, Model -> Material)
+        // childElement_FBXSource (Source) is logically "contained by" or "uses" parentElement_FBXDestination (Destination)
+        public void AddConnectionOO_ChildToParent(Element3D childElement_FBXSource, Element3D parentElement_FBXDestination)
+        {
+            AddConnection(childElement_FBXSource, parentElement_FBXDestination, FbxConnectionType.ObjectObject);
+        }
 
-            EnsureFbxObjectCreated(childElement);
-            EnsureFbxObjectCreated(parentElement);
+        // Specific connection for Skin -> Model (Model is deformed by Skin) - REMOVED as per refined spec
+        // public void AddConnectionDeformer_SkinToModel(Element3D skinElement_FBXSource, Element3D modelElement_FBXDestination)
+        // {
+        // 	AddConnection(skinElement_FBXSource, modelElement_FBXDestination, FbxConnectionType.Deformer);
+        // }
 
-            if (_objectTemplates.TryGetValue(childElement.Id.Value, out IFbxObjectTemplate childFbx) &&
-                _objectTemplates.TryGetValue(parentElement.Id.Value, out IFbxObjectTemplate parentFbx))
-            {
-                // Console.WriteLine($"  Found childFbx: {childFbx.Name}, parentFbx: {parentFbx.Name}");
-                FbxConnection conn = new FbxConnection(childFbx, parentFbx);
-                this._connections.Add(conn);
-                // Console.WriteLine($"    Added OO Connection: {childFbx.Name} ({childFbx.Id}) -> {parentFbx.Name} ({parentFbx.Id})");
-            }
-            else
-            {
-                // string childStatus = _objectTemplates.ContainsKey(childElement.Id.Value) ? "found" : "NOT FOUND";
-                // string parentStatus = _objectTemplates.ContainsKey(parentElement.Id.Value) ? "found" : "NOT FOUND";
-                // Console.WriteLine($"Error: AddConnectionOO - Could not create connection. Child '{childElement.Name}' ({childElement.Id.Value}) status: {childStatus}. Parent '{parentElement.Name}' ({parentElement.Id.Value}) status: {parentStatus}.");
-            }
+        // Specific connection for Skin -> Mesh (Skin deforms Mesh)
+        // FBX: C: "Deformer", <Skin_ID_Source>, <Mesh_ID_Destination>
+        public void AddConnectionDeformer_SkinToMesh(Element3D skinElement_FBXSource, Element3D meshElement_FBXDestination)
+        {
+            AddConnection(skinElement_FBXSource, meshElement_FBXDestination, FbxConnectionType.Deformer);
+        }
+
+        // Specific connection for Cluster -> Skin (Skin has Cluster)
+        // FBX: C: "SubDeformer", <Cluster_ID_Source>, <Skin_ID_Destination>
+        public void AddConnectionSubDeformer_ClusterToSkin(Element3D clusterElement_FBXSource, Element3D skinElement_FBXDestination)
+        {
+            AddConnection(clusterElement_FBXSource, skinElement_FBXDestination, FbxConnectionType.SubDeformer);
+        }
+
+        // Specific connection for Cluster -> Bone
+        // FBX: C: "OO", <Cluster_ID_Source>, <Bone_ID_Destination>
+        public void AddConnectionOO_ClusterToBone(Element3D clusterElement_FBXSource, Element3D boneElement_FBXDestination)
+        {
+            AddConnection(clusterElement_FBXSource, boneElement_FBXDestination, FbxConnectionType.ObjectObject);
         }
 
 
         protected void initializeRoot()
         {
-            // Root node should be processed to create the connections but it is not written in the file with ID 0 in Objects.
-            // It is referenced by ID 0 in the "Documents" section.
-            this.RootNode.Id = 0; // Special ID for scene root node.
+            this.RootNode.Id = 0;
             EnsureFbxObjectCreated(this.RootNode);
         }
-
 
         private FbxNode nodeFBXHeaderExtension()
         {
             FbxNode header = new FbxNode(FbxFileToken.FBXHeaderExtension);
-
             header.Nodes.Add(new FbxNode(FbxFileToken.FBXHeaderVersion, 1003));
             header.Nodes.Add(new FbxNode("FBXVersion", (int)this.Version));
-
-            if (this.Options.IsBinaryFormat)
-            {
-                header.Add("EncryptionType", 0);
-            }
-
+            if (this.Options.IsBinaryFormat) header.Add("EncryptionType", 0);
             DateTime now = DateTime.Now;
             FbxNode tiemespan = new FbxNode(FbxFileToken.CreationTimeStamp);
             tiemespan.Nodes.Add(new FbxNode(FbxFileToken.Version, 1000));
@@ -270,48 +218,24 @@ namespace MeshIO.FBX.Writers
             tiemespan.Nodes.Add(new FbxNode(nameof(now.Second), now.Second));
             tiemespan.Nodes.Add(new FbxNode(nameof(now.Millisecond), now.Millisecond));
             header.Nodes.Add(tiemespan);
-
             header.Add(FbxFileToken.Creator, $"MeshIO.FBX {this.MeshIOVersion}");
-
-            // SceneInfo can be added here if needed
-            // FbxNode sceneInfo = header.Add("SceneInfo", $"GlobalInfo::{this.Scene.Name}", "UserData");
-            // sceneInfo.Add("Type", "UserData");
-            // sceneInfo.Add("Version", 100);
-            // FbxNode metadata = sceneInfo.Add("MetaData");
-            // metadata.Add("Version", 100);
-            // metadata.Add("Title", this.Scene.Name ?? "Untitled Scene");
-            // metadata.Add("Subject", "");
-            // metadata.Add("Author", "MeshIO User");
-            // metadata.Add("Keywords", "");
-            // metadata.Add("Revision", "1.0");
-            // metadata.Add("Comment", $"Exported with MeshIO.FBX {this.MeshIOVersion}");
-
             return header;
         }
 
         private FbxNode nodeGlobalSettings()
         {
-            // Check if GlobalSettings has already been added to _definedObjects (e.g., by a custom setup)
             if (!_definedObjects.TryGetValue(FbxFileToken.GlobalSettings, out var globalSettingsList) || !globalSettingsList.Any())
             {
                 FbxGlobalSettingsTemplate globalSettingsTemplate = new FbxGlobalSettingsTemplate();
-                if (globalSettingsList == null)
-                {
-                    globalSettingsList = new List<IFbxObjectTemplate>();
-                    _definedObjects.Add(FbxFileToken.GlobalSettings, globalSettingsList);
-                }
-                globalSettingsList.Add(globalSettingsTemplate); // Add to defined objects so it's counted in Definitions
+                if (globalSettingsList == null) globalSettingsList = new List<IFbxObjectTemplate>();
+                _definedObjects.Add(FbxFileToken.GlobalSettings, globalSettingsList);
+                globalSettingsList.Add(globalSettingsTemplate);
             }
-
-            // Retrieve the (potentially user-modified) global settings properties
             var globalSettingsInstance = _definedObjects[FbxFileToken.GlobalSettings].First() as FbxGlobalSettingsTemplate;
             var propertiesToUse = globalSettingsInstance?.FbxProperties ?? new FbxGlobalSettingsTemplate().FbxProperties;
-
-
             FbxNode settings = new FbxNode(FbxFileToken.GlobalSettings);
-            settings.Nodes.Add(new FbxNode(FbxFileToken.Version, 1000)); // Common version for GlobalSettings
+            settings.Nodes.Add(new FbxNode(FbxFileToken.Version, 1000));
             settings.Nodes.Add(this.PropertiesToNode(propertiesToUse));
-
             return settings;
         }
 
@@ -319,60 +243,46 @@ namespace MeshIO.FBX.Writers
         {
             FbxNode documents = new FbxNode(FbxFileToken.Documents);
             documents.Nodes.Add(new FbxNode(FbxFileToken.Count, this.Scene.SubScenes.Count + 1));
-
-            // Scene.GetIdOrDefault() will generate an ID if null, but for root, we use 0.
-            // The main scene document uses the scene's actual ID if set, or a generated one.
-            // The RootNode property of the document refers to the scene's root node ID (which is 0).
             var sceneId = this.Scene.Id.HasValue ? (long)this.Scene.Id.Value : this.Scene.GetIdOrDefault();
-            var doc = documents.Add(FbxFileToken.Document, sceneId, this.Scene.Name ?? "Scene", FbxFileToken.Scene); // FBX SubType
-            doc.Add(FbxFileToken.RootNode, (long)0); // Always 0 for the main scene document's root.
-
-            // TODO: Handle SubScenes if any
-            // foreach (Scene subScene in this.Scene.SubScenes) { ... }
-
+            var doc = documents.Add(FbxFileToken.Document, sceneId, this.Scene.Name ?? "Scene", FbxFileToken.Scene);
+            doc.Add(FbxFileToken.RootNode, (long)0);
             return documents;
         }
 
         private FbxNode nodeReferences()
         {
-            FbxNode references = new FbxNode(FbxFileToken.References);
-            // Typically empty for simple exports
-            // references.Nodes.Add(null); // An empty node list is represented by adding a null
-            return references;
+            return new FbxNode(FbxFileToken.References);
         }
 
         private FbxNode nodeDefinitions()
         {
             FbxNode definitions = new FbxNode(FbxFileToken.Definitions);
-
             definitions.Nodes.Add(new FbxNode(FbxFileToken.Version, 100));
-            definitions.Nodes.Add(new FbxNode(FbxFileToken.Count, this._definedObjects.Count)); // Count of ObjectType entries
-
-            foreach (var item in this._definedObjects) // item.Key is FbxObjectName (e.g., "Model", "Geometry")
+            definitions.Nodes.Add(new FbxNode(FbxFileToken.Count, this._definedObjects.Count));
+            foreach (var item in this._definedObjects)
             {
                 FbxNode objectTypeNode = new FbxNode(FbxFileToken.ObjectType, item.Key);
-                objectTypeNode.Nodes.Add(new FbxNode(FbxFileToken.Count, item.Value.Count)); // Number of actual objects of this type
+                int countForObjectType = item.Value.Count;
 
-                // GlobalSettings and Deformers (Skin, Cluster) don't have a "PropertyTemplate" sub-node in Definitions.
-                if (item.Key == FbxFileToken.GlobalSettings || item.Key == FbxFileToken.Deformer)
+                if (item.Key == FbxFileToken.Pose)
                 {
-                    // No PropertyTemplate for these.
+                    FbxNode topLevelPoseNode = this.fbxRoot.Nodes.FirstOrDefault(n => n.Name == FbxFileToken.Pose);
+                    countForObjectType = topLevelPoseNode?.Nodes.Count(pn => pn.Name == "Pose") ?? 0;
                 }
+                objectTypeNode.Nodes.Add(new FbxNode(FbxFileToken.Count, countForObjectType));
+
+                if (item.Key == FbxFileToken.GlobalSettings || item.Key == FbxFileToken.Deformer || item.Key == FbxFileToken.Pose)
+                { /* No PropertyTemplate */ }
                 else
                 {
-                    // For Model, Geometry, Material, etc., create or get their template.
                     if (!this._tempaltes.TryGetValue(item.Key, out FbxPropertyTemplate template))
                     {
-                        template = FbxPropertyTemplate.Create(item.Key); // Create default template
+                        template = FbxPropertyTemplate.Create(item.Key);
                         this._tempaltes.Add(item.Key, template);
                     }
-
-                    var propertyTemplateNode = new FbxNode("PropertyTemplate", template.Name); // e.g., "FbxNode", "FbxMesh"
+                    var propertyTemplateNode = new FbxNode("PropertyTemplate", template.Name);
                     FbxNode props70Node = this.PropertiesToNode(template.Properties.Values);
-                    if (props70Node != null) // PropertiesToNode can return null if no properties
-                    {
-                        propertyTemplateNode.Nodes.Add(props70Node);
-                    }
+                    if (props70Node != null) propertyTemplateNode.Nodes.Add(props70Node);
                     objectTypeNode.Nodes.Add(propertyTemplateNode);
                 }
                 definitions.Nodes.Add(objectTypeNode);
@@ -380,108 +290,163 @@ namespace MeshIO.FBX.Writers
             return definitions;
         }
 
+        protected Matrix4 CalculateWorldMatrix(Node node)
+        {
+            if (node == null) return Matrix4.Identity;
+
+            Matrix4 worldMatrix = node.Transform.Matrix;
+
+            // This relies on Node.Parent being correctly populated.
+            // The original MeshIO.Node.Parent is { get; } and not set externally.
+            // This needs to be handled in the core MeshIO library or by manually setting Parent in tests.
+            Element3D currentAsElement = node.Parent;
+
+            List<Matrix4> parentMatrices = new List<Matrix4>();
+            while (currentAsElement != null && currentAsElement is Node parentNode && parentNode != this.Scene.RootNode /* Stop at scene root */)
+            {
+                parentMatrices.Add(parentNode.Transform.Matrix);
+                currentAsElement = parentNode.Parent;
+            }
+
+            parentMatrices.Reverse(); // Apply from root-most parent down to immediate parent
+
+            foreach (var pMat in parentMatrices)
+            {
+                worldMatrix = pMat * worldMatrix;
+            }
+            return worldMatrix;
+        }
+
+
+        private FbxNode nodePoses()
+        {
+            FbxNode posesNode = new FbxNode(FbxFileToken.Pose);
+            int poseCount = 0;
+            HashSet<Node> bonesInPose = new HashSet<Node>();
+
+            // Gather all bones that are part of the scene's object templates
+            foreach (var objTemplate in _objectTemplates.Values)
+            {
+                if (objTemplate.GetElement() is Bone bone)
+                {
+                    bonesInPose.Add(bone);
+                }
+            }
+            // Also ensure bones linked by clusters are definitely in.
+            foreach (var objTemplate in _objectTemplates.Values)
+            {
+                if (objTemplate.GetElement() is Skin skin)
+                {
+                    foreach (Cluster cluster in skin.Clusters)
+                    {
+                        if (cluster.Link != null && cluster.Link.Id.HasValue && _objectTemplates.ContainsKey(cluster.Link.Id.Value))
+                        {
+                            bonesInPose.Add(cluster.Link);
+                        }
+                    }
+                }
+            }
+
+            if (bonesInPose.Any())
+            {
+                poseCount = 1;
+                long poseNodeId = Scene.GetIdOrDefault();
+                unchecked { poseNodeId = (poseNodeId == 0 ? 1 : poseNodeId) * 31 + 1001; }
+
+
+                FbxNode bindPose = posesNode.Add("Pose", poseNodeId, "BindPose", "BindPose");
+                bindPose.Add("Type", "BindPose");
+                bindPose.Add("NbPoseNodes", bonesInPose.Count);
+
+                foreach (Node boneNode in bonesInPose)
+                {
+                    if (!boneNode.Id.HasValue || !_objectTemplates.ContainsKey(boneNode.Id.Value)) continue;
+                    FbxNode poseNodeEntry = bindPose.Add("PoseNode");
+                    poseNodeEntry.Add("Node", (long)boneNode.Id.Value);
+
+                    Matrix4 boneWorldBindMatrix = Matrix4.Identity;
+                    Cluster foundCluster = _objectTemplates.Values
+                        .Select(ot => ot.GetElement()).OfType<Skin>()
+                        .SelectMany(s => s.Clusters).FirstOrDefault(c => c.Link == boneNode);
+
+                    if (foundCluster != null) boneWorldBindMatrix = foundCluster.TransformMatrix;
+                    else boneWorldBindMatrix = CalculateWorldMatrix(boneNode);
+
+                    poseNodeEntry.Add("Matrix", boneWorldBindMatrix.ToRowMajorArray());
+                }
+            }
+
+            if (posesNode.Nodes.Any(n => n.Name == "Pose"))
+            {
+                posesNode.Nodes.Insert(0, new FbxNode("Count", poseCount));
+            }
+            else
+            {
+                posesNode.Add("Count", 0);
+            }
+
+            if (poseCount > 0)
+            {
+                if (!_definedObjects.ContainsKey(FbxFileToken.Pose))
+                {
+                    _definedObjects.Add(FbxFileToken.Pose, new List<IFbxObjectTemplate>());
+                }
+            }
+            return posesNode;
+        }
+
         private FbxNode nodeObjects()
         {
             FbxNode objectsNode = new FbxNode(FbxFileToken.Objects);
-
-            // Iterate over _objectTemplates, which should be populated by EnsureFbxObjectCreated
-            // The RootNode (ID 0) itself is not written as an object here.
             foreach (IFbxObjectTemplate objTemplate in this._objectTemplates.Values.Where(ot => ot.Id != "0"))
             {
                 if (!this._tempaltes.TryGetValue(objTemplate.FbxObjectName, out FbxPropertyTemplate propertyDefTemplate))
                 {
-                    // For types like Deformer (Skin, Cluster), there's no predefined PropertyTemplate in _tempaltes.
-                    // So, create an empty one or handle as appropriate.
-                    if (objTemplate.FbxObjectName == FbxFileToken.Deformer)
-                    {
+                    if (objTemplate.FbxObjectName == FbxFileToken.Deformer || objTemplate.FbxObjectName == FbxFileToken.Pose)
                         propertyDefTemplate = new FbxPropertyTemplate(objTemplate.FbxObjectName, objTemplate.FbxTypeName, new Dictionary<string, FbxProperty>());
-                    }
-                    else
-                    {
-                        // This case should ideally be covered by nodeDefinitions ensuring _tempaltes is populated.
-                        // If we reach here for Model, Geometry, etc., it's likely an issue.
-                        // Console.WriteLine($"Warning: Property template not found for FbxObjectName '{objTemplate.FbxObjectName}' during nodeObjects. Creating empty.");
-                        propertyDefTemplate = new FbxPropertyTemplate(); // Fallback
-                    }
+                    else propertyDefTemplate = new FbxPropertyTemplate();
                 }
-
-                objTemplate.ApplyTemplate(propertyDefTemplate); // Apply the definition template to the instance
+                objTemplate.ApplyTemplate(propertyDefTemplate);
                 objectsNode.Nodes.Add(objTemplate.ToFbxNode(this));
             }
-
             return objectsNode;
         }
 
         private FbxNode nodeConnections()
         {
             FbxNode connectionsNode = new FbxNode(FbxFileToken.Connections);
-
             foreach (FbxConnection c in this._connections)
             {
-                // Skip connections involving the scene root (ID 0) if it's the parent,
-                // as the scene root is not an "object" in the Objects block.
-                // However, children can connect TO the root (ID 0).
-                // The main scene object in "Documents" has a "RootNode: 0" property.
-                if (c.Parent.Id == "0" && c.Child.Id == "0") continue; // Self-connection of root, skip
-
+                if (c.ParentId == "0" && c.ChildId == "0") continue;
                 FbxNode con = connectionsNode.Add("C");
 
-                switch (c.ConnectionType) // This is currently always ObjectObject from FbxConnection constructor
-                {
-                    case FbxConnectionType.ObjectObject:
-                        con.Properties.Add("OO");
-                        break;
-                    // Add other cases (OP, PO, PP) if they become relevant
-                    default:
-                        // Console.WriteLine($"Warning: Unsupported FbxConnectionType '{c.ConnectionType}' found.");
-                        con.Properties.Add("OO"); // Default to OO
-                        break;
-                }
+                con.Properties.Add(c.GetTypeString());
 
-                // Ensure IDs are valid longs.
-                if (!long.TryParse(c.Child.Id, out long childIdL) || !long.TryParse(c.Parent.Id, out long parentIdL))
+                if (!long.TryParse(c.ChildId, out long childIdL) || !long.TryParse(c.ParentId, out long parentIdL))
                 {
-                    // Console.WriteLine($"Error: Invalid ID format for connection. Child: '{c.Child.Id}', Parent: '{c.Parent.Id}'. Skipping connection.");
-                    connectionsNode.Nodes.RemoveAt(connectionsNode.Nodes.Count - 1); // Remove the "C" node
+                    connectionsNode.Nodes.RemoveAt(connectionsNode.Nodes.Count - 1);
                     continue;
                 }
+                con.Properties.Add(childIdL); // FBX Source ID (FbxConnection.ChildId)
+                con.Properties.Add(parentIdL);  // FBX Destination ID (FbxConnection.ParentId)
 
-                con.Properties.Add(childIdL);
-                con.Properties.Add(parentIdL);
-
-                // Optional: Add property name if it's a Property-Object or Object-Property connection
-                // if (c.ConnectionType == FbxConnectionType.ObjectProperty || c.ConnectionType == FbxConnectionType.PropertyObject)
-                // {
-                //     con.Properties.Add(c.PropertyName ?? ""); // Placeholder
-                // }
+                if (c.ConnectionType == FbxConnectionType.ObjectProperty && !string.IsNullOrEmpty(c.PropertyName))
+                {
+                    con.Properties.Add(c.PropertyName);
+                }
             }
-
             return connectionsNode;
         }
 
         public FbxNode PropertiesToNode(IEnumerable<Property> properties)
         {
-            if (properties == null || !properties.Any())
-            {
-                return null; // Return null if there are no properties, so an empty Properties70 node isn't created.
-            }
-
+            if (properties == null || !properties.Any()) return null;
             FbxNode node = new FbxNode(FbxFileToken.GetPropertiesName(this.Version));
-
             foreach (Property p in properties)
             {
-                FbxProperty fbxProp;
-                if (p is FbxProperty alreadyFbxProp)
-                {
-                    fbxProp = alreadyFbxProp;
-                }
-                else
-                {
-                    fbxProp = FbxProperty.CreateFrom(p);
-                }
+                FbxProperty fbxProp = (p is FbxProperty alreadyFbxProp) ? alreadyFbxProp : FbxProperty.CreateFrom(p);
                 node.Nodes.Add(fbxProp.ToNode());
             }
-
             return node;
         }
     }

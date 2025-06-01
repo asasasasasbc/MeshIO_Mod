@@ -47,6 +47,8 @@ namespace MeshIO.FBX
         public const string SkinType = "Skin";       // Sub-type for Deformer
         public const string ClusterType = "Cluster";   // Sub-type for Deformer
 
+        public const string Pose = "Pose";
+
         public static string GetPropertiesName(FbxVersion version)
 		{
 			switch (version)
