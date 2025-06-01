@@ -17,9 +17,9 @@ namespace MeshIO.Examples
             //FbxSkeletonExportExample.ExportSimpleArmature(filePath_ascii, false);
 
             //jsonBoneConvert();
-            filePath = Path.Combine(desktopPath, "SkinRectExportV3.82.fbx");
+            filePath = Path.Combine(desktopPath, "SkinRectExportV3.87.fbx");
             FbxSkinningExample.ExportSkinnedRectangle(filePath, true);
-            filePath = Path.Combine(desktopPath, "SkinRectExportV3.82.ascii.fbx");
+            filePath = Path.Combine(desktopPath, "SkinRectExportV3.87.ascii.fbx");
             FbxSkinningExample.ExportSkinnedRectangle(filePath, false);
         }
         static void exportSkeleton(string in_path, string out_path) {

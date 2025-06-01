@@ -5,10 +5,9 @@ using MeshIO.Entities;
 using MeshIO.Entities.Skinning;
 using MeshIO.Entities.Geometries;
 using System.Collections.Generic;
+using System.Linq;
+using System;
 using MeshIO.FBX.Connections;
-using MeshIO.Entities.Geometries; // Needed for checking for Mesh entity
-using System; // For Console, remove if not debugging
-using System.Linq; // <<<<<<< ADD THIS LINE
 
 namespace MeshIO.FBX.Templates
 {
@@ -20,24 +19,43 @@ namespace MeshIO.FBX.Templates
         {
             get
             {
-                // If this Node is a Bone, FbxBoneTemplate will handle it.
-                // This template is for generic Nodes.
-                // Check if this Node has a Mesh entity directly attached.
                 if (_element.Entities.Any(e => e is Mesh))
                 {
-                    return FbxFileToken.Mesh; // Export as Model of subtype "Mesh"
+                    return FbxFileToken.Mesh;
                 }
-                return "Null"; // Default for generic nodes without a direct mesh
+                return "Null";
             }
         }
 
+        public FbxNodeTemplate(FbxNode fbxNode) : base(fbxNode, new Node()) { }
+        public FbxNodeTemplate(Node meshIoNode) : base(meshIoNode) { }
 
-        public FbxNodeTemplate(FbxNode node) : base(node, new Node()) { } // For Reading
-        public FbxNodeTemplate(Node nodeElement) : base(nodeElement) { } // For Writing
-
-        public override void Build(FbxFileBuilderBase builder) // For Reading
+        public override void Build(FbxFileBuilderBase builder)
         {
             base.Build(builder);
+
+            FbxPropertyTemplate template = builder.GetProperties(FbxObjectName);
+            Dictionary<string, FbxProperty> nodeProps = builder.ReadProperties(FbxNode);
+
+            foreach (var t in template.Properties)
+            {
+                if (!nodeProps.ContainsKey(t.Key)) nodeProps.Add(t.Key, t.Value);
+            }
+
+            if (nodeProps.TryGetValue("Lcl Translation", out var translationProp))
+                _element.Transform.Translation = (CSMath.XYZ)translationProp.ToProperty().Value;
+            if (nodeProps.TryGetValue("Lcl Rotation", out var rotationProp))
+                _element.Transform.EulerRotation = (CSMath.XYZ)rotationProp.ToProperty().Value;
+            if (nodeProps.TryGetValue("Lcl Scaling", out var scalingProp))
+                _element.Transform.Scale = (CSMath.XYZ)scalingProp.ToProperty().Value;
+            if (nodeProps.TryGetValue("Visibility", out var visibilityProp))
+                _element.IsVisible = Convert.ToBoolean(visibilityProp.ToProperty().Value);
+
+            var processedKeys = new List<string> { "Lcl Translation", "Lcl Rotation", "Lcl Scaling", "Visibility" };
+            foreach (var key in processedKeys) nodeProps.Remove(key);
+
+            addProperties(nodeProps);
+
             processChildren_Reading(builder);
         }
 
@@ -84,7 +102,6 @@ namespace MeshIO.FBX.Templates
         public override void ProcessChildren(FbxFileWriterBase fwriter) // For Writing
         {
             // 1. Handle hierarchical child nodes (Models/Bones)
-            //    FBX: C: "OO", <ChildNode_ID_Source>, <ThisNode_ID_Destination>
             foreach (Node node_child in this._element.Nodes)
             {
                 fwriter.CreateHierarchicalConnection(node_child, this);
@@ -128,11 +145,11 @@ namespace MeshIO.FBX.Templates
                     // FBX: C: "SubDeformer", <Cluster_ID_Source>, <Skin_ID_Destination>
                     fwriter.AddConnectionSubDeformer_ClusterToSkin(cluster, skinEntity);
 
-                    if (cluster.Link != null) // cluster.Link is the Bone
+                    if (cluster.Link != null)
                     {
                         // Connection: Cluster is linked to Bone
-                        // FBX: C: "OO", <Cluster_ID_Source>, <Bone_ID_Destination>
-                        fwriter.AddConnectionOO_ClusterToBone(cluster, cluster.Link);
+                        // FBX: C: "Deformer", <Cluster_ID_Source>, <Bone_ID_Destination>
+                        fwriter.AddConnectionDeformer_ClusterToBone(cluster, cluster.Link);
                     }
                 }
             }
@@ -140,7 +157,6 @@ namespace MeshIO.FBX.Templates
             // Connect other direct entities (Lights, Cameras) to this Model
             foreach (var entity in otherDirectEntities)
             {
-                // FBX: C: "OO", <OtherEntity_ID_Source>, <Model_ID_Destination>
                 fwriter.AddConnectionOO_ChildToParent(entity, this.GetElement());
             }
 
@@ -148,54 +164,51 @@ namespace MeshIO.FBX.Templates
             foreach (Shaders.Material mat in this._element.Materials)
             {
                 fwriter.EnsureFbxObjectCreated(mat);
-                // FBX: C: "OO", <Material_ID_Source>, <Model_ID_Destination>
                 fwriter.AddConnectionOO_ChildToParent(mat, this.GetElement());
             }
         }
 
-        protected override void addProperties(Dictionary<string, FbxProperty> properties) // For Reading
+        protected override void addProperties(Dictionary<string, FbxProperty> properties)
         {
-            var standardProps = new HashSet<string> { "Lcl Translation", "Lcl Rotation", "Lcl Scaling", "Visibility" };
             foreach (var prop in properties)
             {
-                if (!standardProps.Contains(prop.Key) && !_element.Properties.Contains(prop.Key))
+                if (!_element.Properties.Contains(prop.Key))
                 {
                     _element.Properties.Add(prop.Value.ToProperty());
                 }
             }
         }
 
-        protected void processChildren_Reading(FbxFileBuilderBase builder) // Renamed for clarity (for Reading)
+        protected void processChildren_Reading(FbxFileBuilderBase builder)
         {
-            foreach (FbxConnection c in builder.GetChildren(Id)) // Id is from FbxObjectTemplate (this.FbxNode's ID)
+            foreach (FbxConnection c in builder.GetChildren(Id))
             {
-                if (!builder.TryGetTemplate(c.ChildId, out IFbxObjectTemplate template)) // c.ChildId is FBX Source
+                if (!builder.TryGetTemplate(c.ChildId, out IFbxObjectTemplate template))
                 {
                     builder.Notify($"[{_element.GetType().FullName}] child object not found {c.ChildId}", Core.NotificationType.Warning);
                     continue;
                 }
-                addChild_Reading(template.GetElement());
+                Element3D childElement = template.GetElement();
+                addChild_Reading(childElement, c.ConnectionType);
+
                 template.Build(builder);
             }
         }
 
-        protected void addChild_Reading(Element3D element) // Renamed for clarity (for Reading)
+        protected void addChild_Reading(Element3D element, FbxConnectionType connectionType)
         {
             switch (element)
             {
                 case Node node:
                     _element.Nodes.Add(node);
-                    // TODO for Reading: Set parent if MeshIO.Node supports it and if connection implies hierarchy
-                    // if (node is Bone b) b.Parent = this._element; else node.Parent = this._element;
+                    // if (node.Parent == null) node.Parent = this._element; // Requires Node.Parent to be settable
                     break;
                 case Material mat:
                     _element.Materials.Add(mat);
                     break;
                 case Entity entity:
                     _element.Entities.Add(entity);
-                    // TODO for Reading: entity.Parent = this._element; 
-                    break;
-                default:
+                    // if (!entity.ParentNodes.Contains(this._element)) entity.ParentNodes.Add(this._element); // Requires ParentNodes
                     break;
             }
         }

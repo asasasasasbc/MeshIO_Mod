@@ -141,12 +141,7 @@ namespace MeshIO.FBX.Writers
                 _connections.Add(new FbxConnection(childFbx_SourceTemplate, parentFbx_DestinationTemplate, type, propertyName));
                 // Console.WriteLine($"    Added Connection ({type}): {childFbx_SourceTemplate.Name} ({childFbx_SourceTemplate.Id}) [Source] -> {parentFbx_DestinationTemplate.Name} ({parentFbx_DestinationTemplate.Id}) [Dest]");
             }
-            else
-            {
-                // string childStatus = _objectTemplates.ContainsKey(childElement_FBXSource.Id.Value) ? "found" : "NOT FOUND";
-                // string parentStatus = _objectTemplates.ContainsKey(parentElement_FBXDestination.Id.Value) ? "found" : "NOT FOUND";
-                // Console.WriteLine($"Error: AddConnection ({type}) - Could not create. Child '{childElement_FBXSource.Name}' ({childElement_FBXSource.Id.Value}) status: {childStatus}. Parent '{parentElement_FBXDestination.Name}' ({parentElement_FBXDestination.Id.Value}) status: {parentStatus}.");
-            }
+            // ... (else error logging) ...
         }
 
         public void CreateHierarchicalConnection(Element3D childNodeElement, IFbxObjectTemplate parentNodeFbxTemplate)
@@ -167,12 +162,6 @@ namespace MeshIO.FBX.Writers
             AddConnection(childElement_FBXSource, parentElement_FBXDestination, FbxConnectionType.ObjectObject);
         }
 
-        // Specific connection for Skin -> Model (Model is deformed by Skin) - REMOVED as per refined spec
-        // public void AddConnectionDeformer_SkinToModel(Element3D skinElement_FBXSource, Element3D modelElement_FBXDestination)
-        // {
-        // 	AddConnection(skinElement_FBXSource, modelElement_FBXDestination, FbxConnectionType.Deformer);
-        // }
-
         // Specific connection for Skin -> Mesh (Skin deforms Mesh)
         // FBX: C: "Deformer", <Skin_ID_Source>, <Mesh_ID_Destination>
         public void AddConnectionDeformer_SkinToMesh(Element3D skinElement_FBXSource, Element3D meshElement_FBXDestination)
@@ -188,10 +177,10 @@ namespace MeshIO.FBX.Writers
         }
 
         // Specific connection for Cluster -> Bone
-        // FBX: C: "OO", <Cluster_ID_Source>, <Bone_ID_Destination>
-        public void AddConnectionOO_ClusterToBone(Element3D clusterElement_FBXSource, Element3D boneElement_FBXDestination)
+        // FBX: C: "Deformer", <Cluster_ID_Source>, <Bone_ID_Destination>
+        public void AddConnectionDeformer_ClusterToBone(Element3D clusterElement_FBXSource, Element3D boneElement_FBXDestination)
         {
-            AddConnection(clusterElement_FBXSource, boneElement_FBXDestination, FbxConnectionType.ObjectObject);
+            AddConnection(clusterElement_FBXSource, boneElement_FBXDestination, FbxConnectionType.Deformer);
         }
 
 
@@ -296,19 +285,16 @@ namespace MeshIO.FBX.Writers
 
             Matrix4 worldMatrix = node.Transform.Matrix;
 
-            // This relies on Node.Parent being correctly populated.
-            // The original MeshIO.Node.Parent is { get; } and not set externally.
-            // This needs to be handled in the core MeshIO library or by manually setting Parent in tests.
             Element3D currentAsElement = node.Parent;
 
             List<Matrix4> parentMatrices = new List<Matrix4>();
             while (currentAsElement != null && currentAsElement is Node parentNode && parentNode != this.Scene.RootNode /* Stop at scene root */)
             {
                 parentMatrices.Add(parentNode.Transform.Matrix);
-                currentAsElement = parentNode.Parent;
+                currentAsElement = parentNode.Parent; // This requires Node.Parent to be correctly set.
             }
 
-            parentMatrices.Reverse(); // Apply from root-most parent down to immediate parent
+            parentMatrices.Reverse();
 
             foreach (var pMat in parentMatrices)
             {
@@ -317,62 +303,86 @@ namespace MeshIO.FBX.Writers
             return worldMatrix;
         }
 
-
         private FbxNode nodePoses()
         {
             FbxNode posesNode = new FbxNode(FbxFileToken.Pose);
             int poseCount = 0;
-            HashSet<Node> bonesInPose = new HashSet<Node>();
+            HashSet<Node> nodesInBindPose = new HashSet<Node>();
 
-            // Gather all bones that are part of the scene's object templates
             foreach (var objTemplate in _objectTemplates.Values)
             {
                 if (objTemplate.GetElement() is Bone bone)
                 {
-                    bonesInPose.Add(bone);
+                    nodesInBindPose.Add(bone);
                 }
             }
-            // Also ensure bones linked by clusters are definitely in.
+
+            Node skinnedModelNode = null;
+            Skin skinDeformer = null; // To find the skin deformer associated with the model
             foreach (var objTemplate in _objectTemplates.Values)
             {
-                if (objTemplate.GetElement() is Skin skin)
+                if (objTemplate.GetElement() is Node modelNode)
                 {
-                    foreach (Cluster cluster in skin.Clusters)
+                    foreach (var entity in modelNode.Entities)
                     {
-                        if (cluster.Link != null && cluster.Link.Id.HasValue && _objectTemplates.ContainsKey(cluster.Link.Id.Value))
+                        if (entity is Skin skin && skin.DeformedGeometry != null)
                         {
-                            bonesInPose.Add(cluster.Link);
+                            skinnedModelNode = modelNode;
+                            skinDeformer = skin; // Capture the skin deformer
+                            nodesInBindPose.Add(skinnedModelNode);
+                            break;
                         }
                     }
                 }
+                if (skinnedModelNode != null) break;
             }
 
-            if (bonesInPose.Any())
+            if (nodesInBindPose.Any())
             {
                 poseCount = 1;
-                long poseNodeId = Scene.GetIdOrDefault();
-                unchecked { poseNodeId = (poseNodeId == 0 ? 1 : poseNodeId) * 31 + 1001; }
+                long poseNodeObjectId = Scene.GetIdOrDefault();
+                unchecked { poseNodeObjectId = (poseNodeObjectId == 0 ? 1 : poseNodeObjectId) * 31 + 1001; }
 
 
-                FbxNode bindPose = posesNode.Add("Pose", poseNodeId, "BindPose", "BindPose");
-                bindPose.Add("Type", "BindPose");
-                bindPose.Add("NbPoseNodes", bonesInPose.Count);
+                FbxNode bindPoseNode = posesNode.Add("Pose", poseNodeObjectId, "BindPose", "BindPose");
+                bindPoseNode.Add("Type", "BindPose");
+                bindPoseNode.Add("NbPoseNodes", nodesInBindPose.Count);
 
-                foreach (Node boneNode in bonesInPose)
+                foreach (Node nodeToPose in nodesInBindPose)
                 {
-                    if (!boneNode.Id.HasValue || !_objectTemplates.ContainsKey(boneNode.Id.Value)) continue;
-                    FbxNode poseNodeEntry = bindPose.Add("PoseNode");
-                    poseNodeEntry.Add("Node", (long)boneNode.Id.Value);
+                    if (!nodeToPose.Id.HasValue || !_objectTemplates.ContainsKey(nodeToPose.Id.Value)) continue;
 
-                    Matrix4 boneWorldBindMatrix = Matrix4.Identity;
-                    Cluster foundCluster = _objectTemplates.Values
-                        .Select(ot => ot.GetElement()).OfType<Skin>()
-                        .SelectMany(s => s.Clusters).FirstOrDefault(c => c.Link == boneNode);
+                    FbxNode poseNodeEntry = bindPoseNode.Add("PoseNode");
+                    poseNodeEntry.Add("Node", (long)nodeToPose.Id.Value);
 
-                    if (foundCluster != null) boneWorldBindMatrix = foundCluster.TransformMatrix;
-                    else boneWorldBindMatrix = CalculateWorldMatrix(boneNode);
+                    Matrix4 worldBindMatrix = Matrix4.Identity;
 
-                    poseNodeEntry.Add("Matrix", boneWorldBindMatrix.ToRowMajorArray());
+                    if (nodeToPose is Bone boneForPose)
+                    {
+                        Cluster foundCluster = _objectTemplates.Values
+                            .Select(ot => ot.GetElement()).OfType<Skin>()
+                            .SelectMany(s => s.Clusters).FirstOrDefault(c => c.Link == boneForPose);
+
+                        if (foundCluster != null) worldBindMatrix = foundCluster.TransformMatrix;
+                        else worldBindMatrix = CalculateWorldMatrix(boneForPose);
+                    }
+                    else if (nodeToPose == skinnedModelNode && skinDeformer != null)
+                    {
+                        // For the skinned model node, its bind pose matrix should be its world transform at bind time.
+                        // This typically matches the TransformLinkMatrix of the clusters deforming its mesh.
+                        Cluster anyClusterForThisMesh = skinDeformer.Clusters.FirstOrDefault();
+
+                        if (anyClusterForThisMesh != null)
+                        {
+                            worldBindMatrix = anyClusterForThisMesh.TransformLinkMatrix;
+                        }
+                        else
+                        {
+                            worldBindMatrix = CalculateWorldMatrix(skinnedModelNode); // Fallback
+                        }
+                    }
+
+                    poseNodeEntry.Add("Matrix", worldBindMatrix.ToRowMajorArray());
                 }
             }
 
