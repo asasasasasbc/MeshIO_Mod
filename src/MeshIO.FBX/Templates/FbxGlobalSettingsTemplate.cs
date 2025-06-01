@@ -26,8 +26,9 @@ namespace MeshIO.FBX.Templates
 			FbxProperties.Add(new("CoordAxisSign", "int", "Integer", PropertyFlags.None, 1));
 			FbxProperties.Add(new("OriginalUpAxis", "int", "Integer", PropertyFlags.None, 2));
 			FbxProperties.Add(new("OriginalUpAxisSign", "int", "Integer", PropertyFlags.None, 1));
-			FbxProperties.Add(new("UnitScaleFactor", "double", "Number", PropertyFlags.None, 1.0d));
-			FbxProperties.Add(new("OriginalUnitScaleFactor", "double", "Number", PropertyFlags.None, 1.0d));
+			//Original is 1d which means 1cm for blender, change to 100 to make 1 unit as 1 meter
+			FbxProperties.Add(new("UnitScaleFactor", "double", "Number", PropertyFlags.None, 100.0d));
+			FbxProperties.Add(new("OriginalUnitScaleFactor", "double", "Number", PropertyFlags.None, 100.0d));
 			FbxProperties.Add(new("AmbientColor", "ColorRGB", "Color", PropertyFlags.None, new Color()));
 			FbxProperties.Add(new("DefaultCamera", "KString", string.Empty, PropertyFlags.None, "Producer Perspective"));
 			FbxProperties.Add(new("TimeMode", "enum", string.Empty, PropertyFlags.None, 6));

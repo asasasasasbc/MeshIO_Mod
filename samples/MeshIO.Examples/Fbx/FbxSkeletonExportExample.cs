@@ -57,7 +57,7 @@ namespace MeshIO.Examples.Fbx
             // Armature (Node)
             //  `- RootBone (Bone, SkeletonType)
             //      `- ChildBone (Bone, LimbNode)
-            childBone.Nodes.Add(childBone2);
+            //childBone.Nodes.Add(childBone2);
             rootBone.Nodes.Add(childBone);    // childBone is a child of rootBone
 
             armatureNode.Nodes.Add(rootBone); // rootBone is a child of armatureNode
