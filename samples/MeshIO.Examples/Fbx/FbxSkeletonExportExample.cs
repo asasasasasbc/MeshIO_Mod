@@ -51,7 +51,7 @@ namespace MeshIO.Examples.Fbx
             Console.WriteLine(childBone2.GetIdOrDefault()); // Ensure ID
             // Position childBone relative to rootBone.
             // If rootBone is 1.0 unit long (e.g., along the Y-axis in its local space):
-            childBone.Transform.Translation = new XYZ(0, 1.0, 0); // Places the start of childBone at the end of rootBone
+            childBone.Transform.Translation = new XYZ(0, 2.0, 0); // Places the start of childBone at the end of rootBone
 
             // Establish hierarchy:
             // Armature (Node)

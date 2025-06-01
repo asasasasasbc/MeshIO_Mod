@@ -10,6 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\MeshIO.FBX\MeshIO.FBX.csproj" />
     <ProjectReference Include="..\..\src\MeshIO.STL\MeshIO.STL.csproj" />
     <ProjectReference Include="..\..\src\MeshIO\MeshIO.csproj" />

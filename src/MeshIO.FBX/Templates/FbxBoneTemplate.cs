@@ -72,6 +72,14 @@ namespace MeshIO.FBX.Templates
             // Visibility property
             FbxInstanceProperties["Visibility"] = new FbxProperty("Visibility", "Visibility", "", PropertyFlags.Animatable, 1.0);
 
+            // Read RotationOrder from the Bone's custom properties
+            int fbxRotationOrder = 0; // Default to XYZ if not found
+            var rotOrderProp = _element.Properties.FirstOrDefault(p => p.Name == "RotationOrder");
+            if (rotOrderProp != null && rotOrderProp.Value is int rotOrderVal)
+            {
+                fbxRotationOrder = rotOrderVal;
+            }
+            FbxInstanceProperties["RotationOrder"] = new FbxProperty("RotationOrder", "enum", "", PropertyFlags.None, fbxRotationOrder);
 
             // Bone-specific "Size" property (represents length in FBX for LimbNodes)
             if (_element.Length.HasValue)
