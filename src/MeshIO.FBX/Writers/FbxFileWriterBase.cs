@@ -110,7 +110,8 @@ namespace MeshIO.FBX.Writers
 
 		public void CreateConnection(Element3D child, IFbxObjectTemplate parent)
 		{
-			IFbxObjectTemplate objwriter = FbxTemplateFactory.Create(child);
+            Console.WriteLine($"CreateConnection: Child='{child.Name}' (ID: {child.Id}, Type: {child.GetType().Name}), Parent='{parent.Name}' (ID: {parent.Id}, Type: {parent.GetElement().GetType().Name})");
+            IFbxObjectTemplate objwriter = FbxTemplateFactory.Create(child);
 			if (objwriter is null)
 			{
 				return;
@@ -127,7 +128,8 @@ namespace MeshIO.FBX.Writers
 			{
 				this._definedObjects.Add(objwriter.FbxObjectName, lst = new List<IFbxObjectTemplate>());
 			}
-			lst.Add(objwriter);
+            Console.WriteLine($"    Added to _objectTemplates: '{child.Name}' (ID: {child.Id.Value})");
+            lst.Add(objwriter);
 		}
 
 		protected void initializeRoot()

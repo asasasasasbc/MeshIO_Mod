@@ -363,3 +363,6 @@ MigrationBackup/
 /src/Tests/outFiles
 !src/Tests/inFiles/obj/
 !src/Tests/inFiles/obj/*.obj
+src/CollectCode/CommandToAddBoneArmature.txt
+src/CollectCode/MESHIOFBXresult.txt
+src/CollectCode/MESHIOresult.txt

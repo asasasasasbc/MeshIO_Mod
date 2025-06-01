@@ -40,7 +40,10 @@ namespace MeshIO.FBX
 		public const string Geometry = "Geometry";
 		public const string Material = "Material";
 
-		public static string GetPropertiesName(FbxVersion version)
+        public const string LimbNode = "LimbNode";
+        public const string SkeletonType = "Skeleton"; // FBX Model subtype for skeleton roots
+
+        public static string GetPropertiesName(FbxVersion version)
 		{
 			switch (version)
 			{
