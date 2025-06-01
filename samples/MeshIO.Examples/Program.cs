@@ -16,7 +16,11 @@ namespace MeshIO.Examples
             //FbxSkeletonExportExample.ExportSimpleArmature(filePath, true);
             //FbxSkeletonExportExample.ExportSimpleArmature(filePath_ascii, false);
 
-            jsonBoneConvert();
+            //jsonBoneConvert();
+            filePath = Path.Combine(desktopPath, "SkinRectExportV3.3.fbx");
+            FbxSkinningExample.ExportSkinnedRectangle(filePath, true);
+            filePath = Path.Combine(desktopPath, "SkinRectExportV3.3.ascii.fbx");
+            FbxSkinningExample.ExportSkinnedRectangle(filePath, false);
         }
         static void exportSkeleton(string in_path, string out_path) {
             FbxJsonSkeletonExporter.ExportSkeletonFromJson(in_path, out_path, true);
@@ -36,23 +40,11 @@ namespace MeshIO.Examples
             {
                 RotationOrder[] allOrders = (RotationOrder[])Enum.GetValues(typeof(RotationOrder));
                 exportSkeleton(jsonInputPath, fbxOutputPath);
-                //for (int i = 0; i < allOrders.Length; i++) {
-                //    for (int j = 0; j < allOrders.Length; j++) {
-                //        FbxJsonSkeletonExporter.source_ro = allOrders[i];
-                //        FbxJsonSkeletonExporter.target_ro = allOrders[j];
-                //        exportSkeleton(jsonInputPath, fbxOutputPath + i as string + j as string +".fbx");
-                //    }
-                //}
-
             }
             else
             {
                 Console.WriteLine($"JSON input file not found: {jsonInputPath}");
                 Console.WriteLine("Please create the JSON file with your skeleton data.");
-                // You can write the sample JSON to the file here for testing if needed:
-                // string sampleJsonContent = @"[{""Name"":""L_Forearm"", ...}]"; // (truncated for brevity)
-                // File.WriteAllText(jsonInputPath, sampleJsonContent);
-                // Console.WriteLine("Created a sample JSON. Please re-run or populate with full data.");
             }
         }
 	}

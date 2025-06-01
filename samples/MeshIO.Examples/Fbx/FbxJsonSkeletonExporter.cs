@@ -44,9 +44,6 @@ namespace MeshIO.Examples.Fbx
         public static RotationOrder source_ro = RotationOrder.YZX;
         public static RotationOrder target_ro = RotationOrder.ZYX;
         // FBX RotationOrder enum: 0:XYZ, 1:XZY, 2:YXZ, 3:YZX, 4:ZXY, 5:ZYX
-        // Assuming your source data implies a default rotation order if not specified.
-        // Let's use YZX as a default to match your C# snippet's default.
-
 
         public static void ExportSkeletonFromJson(string jsonFilePath, string outputPathFbx, bool binary=true, int rotOrder=3)
         {

@@ -43,6 +43,10 @@ namespace MeshIO.FBX
         public const string LimbNode = "LimbNode";
         public const string SkeletonType = "Skeleton"; // FBX Model subtype for skeleton roots
 
+        public const string Deformer = "Deformer";
+        public const string SkinType = "Skin";       // Sub-type for Deformer
+        public const string ClusterType = "Cluster";   // Sub-type for Deformer
+
         public static string GetPropertiesName(FbxVersion version)
 		{
 			switch (version)

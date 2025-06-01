@@ -11,6 +11,8 @@ using MeshIO.Shaders;
 using System.Collections.Generic;
 using System.Reflection;
 using System;
+using MeshIO.Entities.Geometries;
+using MeshIO.Entities.Skinning;
 
 namespace MeshIO.FBX.Templates
 {
@@ -90,23 +92,80 @@ namespace MeshIO.FBX.Templates
 
         public override void ProcessChildren(FbxFileWriterBase fwriter)
         {
-            Console.WriteLine($"ProcessChildren for: '{this._element.Name}' (ID: {this._element.Id}, Type: {this._element.GetType().Name}) with {this._element.Nodes.Count} child nodes.");
-            base.ProcessChildren(fwriter);
+            // base.ProcessChildren(fwriter); // FbxObjectTemplate.ProcessChildren is empty
 
-            foreach (Node node in this._element.Nodes)
+            // 1. Handle hierarchical child nodes (other Models/Bones)
+            foreach (Node node_child in this._element.Nodes)
             {
-                Console.WriteLine($"  Processing child node: '{node.Name}' of '{this._element.Name}'");
-                fwriter.CreateConnection(node, this);
+                fwriter.CreateHierarchicalConnection(node_child, this);
             }
 
-            foreach (Shaders.Material mat in this._element.Materials)
-            {
-                fwriter.CreateConnection(mat, this);
-            }
+            // 2. Handle entities attached to this Node (Mesh, Skin, Lights, Cameras etc.)
+            Mesh meshEntity = null;
+            Skin skinEntity = null;
+            List<Entities.Entity> otherEntities = new List<Entities.Entity>();
 
+            // First pass: Ensure all entities are created as FBX objects
+            // This populates _objectTemplates and _definedObjects in the writer
             foreach (Entities.Entity entity in this._element.Entities)
             {
-                fwriter.CreateConnection(entity, this);
+                fwriter.EnsureFbxObjectCreated(entity);
+                if (entity is Mesh mesh) meshEntity = mesh;
+                else if (entity is Skin skin) skinEntity = skin;
+                else if (!(entity is Cluster)) otherEntities.Add(entity); // Clusters are handled via Skin
+            }
+
+            // 3. Connect Mesh to this Model (Node)
+            if (meshEntity != null)
+            {
+                fwriter.AddConnectionOO(meshEntity, this.GetElement()); // Model -- Mesh (Geometry)
+            }
+
+            // 4. Connect Skin, Clusters, and Bones
+            if (skinEntity != null && meshEntity != null)
+            {
+                skinEntity.DeformedGeometry = meshEntity; // Internal link for context
+
+                // Connection: Geometry (Mesh) <-> Skin
+                fwriter.AddConnectionOO(meshEntity, skinEntity);
+
+                foreach (Cluster cluster in skinEntity.Clusters)
+                {
+                    // Ensure cluster and its linked bone are processed by EnsureFbxObjectCreated
+                    // (already done in the first pass over _element.Entities if cluster was there,
+                    // or if cluster.Link was also an entity of this node)
+                    fwriter.EnsureFbxObjectCreated(cluster); // Ensure cluster itself is processed
+                    if (cluster.Link != null)
+                    {
+                        fwriter.EnsureFbxObjectCreated(cluster.Link); // Ensure bone is processed
+                    }
+
+                    // Connection: Skin <-> Cluster
+                    fwriter.AddConnectionOO(skinEntity, cluster);
+
+                    if (cluster.Link != null)
+                    {
+                        // Connection: Cluster <-> Bone (Link)
+                        fwriter.AddConnectionOO(cluster, cluster.Link);
+                    }
+                }
+            }
+
+            // 5. Connect other direct entities (Lights, Cameras) to this Model
+            foreach (var entity in otherEntities)
+            {
+                // Check if it's not already connected through another mechanism (e.g. Skin handling its Clusters)
+                if (!(entity is Skin) && !(entity is Cluster))
+                {
+                    fwriter.AddConnectionOO(entity, this.GetElement()); // Model -- OtherEntity
+                }
+            }
+
+            // 6. Connect Materials to this Model
+            foreach (Shaders.Material mat in this._element.Materials)
+            {
+                fwriter.EnsureFbxObjectCreated(mat);
+                fwriter.AddConnectionOO(mat, this.GetElement()); // Model -- Material
             }
         }
 
