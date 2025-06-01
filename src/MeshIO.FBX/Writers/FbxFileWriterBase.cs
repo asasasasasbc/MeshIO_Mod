@@ -29,6 +29,35 @@ namespace MeshIO.FBX.Writers
         private readonly string MeshIOVersion;
         private readonly HashSet<ulong> _currentlyProcessingForCreation = new HashSet<ulong>();
 
+        public void EnsureFbxObjectCreatedInternal(IFbxObjectTemplate objTemplate)
+        {
+            // Check if already exists by ID (if IFbxObjectTemplate guarantees unique ID string)
+            // This simple check by value might be okay if templates are unique instances.
+            if (_objectTemplates.Values.Any(ot => ot.Id == objTemplate.Id)) return;
+
+            // Assuming objTemplate.Id is a string that can be parsed to ulong for the main dictionary key
+            // For NodeAttribute, its ID is generated and unique.
+            _objectTemplates.Add(ulong.Parse(objTemplate.Id), objTemplate);
+
+            if (!_definedObjects.TryGetValue(objTemplate.FbxObjectName, out List<IFbxObjectTemplate> fbxObjectList))
+            {
+                fbxObjectList = new List<IFbxObjectTemplate>();
+                _definedObjects.Add(objTemplate.FbxObjectName, fbxObjectList);
+            }
+            if (!fbxObjectList.Contains(objTemplate))
+            {
+                fbxObjectList.Add(objTemplate);
+            }
+            // objTemplate.ProcessChildren(this); // NodeAttributes don't have children to process typically
+        }
+
+        // New connection method for template-to-template (e.g., NodeAttribute to Model)
+        public void AddConnectionOO_TemplateToTemplate(IFbxObjectTemplate childFbx_SourceTemplate, IFbxObjectTemplate parentFbx_DestinationTemplate)
+        {
+            if (childFbx_SourceTemplate == null || parentFbx_DestinationTemplate == null) return;
+            _connections.Add(new FbxConnection(childFbx_SourceTemplate, parentFbx_DestinationTemplate, FbxConnectionType.ObjectObject));
+        }
+
         protected FbxFileWriterBase(Scene scene, FbxWriterOptions options)
         {
             this.Scene = scene;
@@ -163,24 +192,30 @@ namespace MeshIO.FBX.Writers
         }
 
         // Specific connection for Skin -> Mesh (Skin deforms Mesh)
-        // FBX: C: "Deformer", <Skin_ID_Source>, <Mesh_ID_Destination>
+        // OLD FBX: C: "Deformer", <Skin_ID_Source>, <Mesh_ID_Destination>
+        // NEW FBX: C: "OO", <Skin_ID_Source>, <Mesh_ID_Destination>
         public void AddConnectionDeformer_SkinToMesh(Element3D skinElement_FBXSource, Element3D meshElement_FBXDestination)
         {
-            AddConnection(skinElement_FBXSource, meshElement_FBXDestination, FbxConnectionType.Deformer);
+            // Changed FbxConnectionType.Deformer to FbxConnectionType.ObjectObject
+            AddConnection(skinElement_FBXSource, meshElement_FBXDestination, FbxConnectionType.ObjectObject);
         }
 
         // Specific connection for Cluster -> Skin (Skin has Cluster)
-        // FBX: C: "SubDeformer", <Cluster_ID_Source>, <Skin_ID_Destination>
+        // OLD FBX: C: "SubDeformer", <Cluster_ID_Source>, <Skin_ID_Destination>
+        // NEW FBX: C: "OO", <Cluster_ID_Source>, <Skin_ID_Destination>
         public void AddConnectionSubDeformer_ClusterToSkin(Element3D clusterElement_FBXSource, Element3D skinElement_FBXDestination)
         {
-            AddConnection(clusterElement_FBXSource, skinElement_FBXDestination, FbxConnectionType.SubDeformer);
+            // Changed FbxConnectionType.SubDeformer to FbxConnectionType.ObjectObject
+            AddConnection(clusterElement_FBXSource, skinElement_FBXDestination, FbxConnectionType.ObjectObject);
         }
-
-        // Specific connection for Cluster -> Bone
-        // FBX: C: "Deformer", <Cluster_ID_Source>, <Bone_ID_Destination>
-        public void AddConnectionDeformer_ClusterToBone(Element3D clusterElement_FBXSource, Element3D boneElement_FBXDestination)
+        // Specific connection for Bone -> Cluster
+        // OLD FBX: C: "Deformer", <Cluster_ID_Source>, <Bone_ID_Destination>  (Cluster linked to Bone)
+        // NEW FBX: C: "OO", <Bone_ID_Source>, <Cluster_ID_Destination> (Bone owns/links to Cluster)
+        public void AddConnectionDeformer_ClusterToBone(Element3D clusterElement_FBXDestination, Element3D boneElement_FBXSource) // Parameters swapped for clarity
         {
-            AddConnection(clusterElement_FBXSource, boneElement_FBXDestination, FbxConnectionType.Deformer);
+            // Changed FbxConnectionType.Deformer to FbxConnectionType.ObjectObject
+            // Swapped order: boneElement_FBXSource is now the FBX Source, clusterElement_FBXDestination is the FBX Destination
+            AddConnection(boneElement_FBXSource, clusterElement_FBXDestination, FbxConnectionType.ObjectObject);
         }
 
 
@@ -247,7 +282,15 @@ namespace MeshIO.FBX.Writers
         {
             FbxNode definitions = new FbxNode(FbxFileToken.Definitions);
             definitions.Nodes.Add(new FbxNode(FbxFileToken.Version, 100));
+
+            // Ensure NodeAttribute is in _definedObjects if any NodeAttributes were created
+            if (_objectTemplates.Values.Any(ot => ot is FbxNodeAttributeTemplate) && !_definedObjects.ContainsKey("NodeAttribute"))
+            {
+                _definedObjects.Add("NodeAttribute", _objectTemplates.Values.Where(ot => ot is FbxNodeAttributeTemplate).ToList());
+            }
+
             definitions.Nodes.Add(new FbxNode(FbxFileToken.Count, this._definedObjects.Count));
+
             foreach (var item in this._definedObjects)
             {
                 FbxNode objectTypeNode = new FbxNode(FbxFileToken.ObjectType, item.Key);
@@ -260,7 +303,11 @@ namespace MeshIO.FBX.Writers
                 }
                 objectTypeNode.Nodes.Add(new FbxNode(FbxFileToken.Count, countForObjectType));
 
-                if (item.Key == FbxFileToken.GlobalSettings || item.Key == FbxFileToken.Deformer || item.Key == FbxFileToken.Pose)
+                // NodeAttribute, Deformer, GlobalSettings, Pose don't have a PropertyTemplate in Definitions
+                if (item.Key == FbxFileToken.GlobalSettings ||
+                    item.Key == FbxFileToken.Deformer ||
+                    item.Key == FbxFileToken.Pose ||
+                    item.Key == "NodeAttribute") // Added NodeAttribute here
                 { /* No PropertyTemplate */ }
                 else
                 {

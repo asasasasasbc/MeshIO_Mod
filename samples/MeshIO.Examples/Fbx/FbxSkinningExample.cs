@@ -200,7 +200,6 @@ namespace MeshIO.Examples.Fbx
         public static Matrix4 GetGlobalMatrix(this Node node, Node rootSceneNode)
         {
             Matrix4 globalMatrix = node.Transform.Matrix; // Local matrix
-            //TODO: calc
             var parent = node.Parent; // Assuming Transform has an Owner (Node) property
             //
             while (parent != null && parent != rootSceneNode && parent is Node) // Go up until the scene root or null

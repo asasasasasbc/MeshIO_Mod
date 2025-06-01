@@ -6,6 +6,7 @@ using MeshIO.Shaders;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MeshIO.FBX.Writers; // Add this if not present
 
 namespace MeshIO.FBX.Templates
 {
@@ -30,20 +31,21 @@ namespace MeshIO.FBX.Templates
         // ***** ADD THIS METHOD *****
         public override void ProcessChildren(FbxFileWriterBase fwriter)
         {
-            // base.ProcessChildren(fwriter); // FbxObjectTemplate.ProcessChildren is empty
+            // Create and connect NodeAttribute FOR THIS BONE
+            // The FbxTypeName for NodeAttribute is the same as the bone's Model SubType (Skeleton/LimbNode)
+            var nodeAttribute = new FbxNodeAttributeTemplate(this._element, this.FbxTypeName);
+            fwriter.EnsureFbxObjectCreatedInternal(nodeAttribute); // Add to object list for definition
 
-            // Bones connect to child bones hierarchically
+            // Connection: NodeAttribute (Source) -> Bone Model (Destination)
+            // C: "OO", <NodeAttributeID_Source>, <BoneModelID_Destination>
+            fwriter.AddConnectionOO_TemplateToTemplate(nodeAttribute, this);
+
+
+            // Hierarchical connections for child bones
             foreach (Node node_child in this._element.Nodes) // _element is a Bone (Node)
             {
-                // Ensure child bone is created and then connect
                 fwriter.CreateHierarchicalConnection(node_child, this);
             }
-
-            // Bones generally don't have materials or direct mesh entities in FBX.
-            // These are typically associated with the Model node that *uses* the skeleton.
-            // If your Bone class can hold materials/entities for some reason:
-            // foreach (Material mat in this._element.Materials) { /* ... */ }
-            // foreach (Entity entity in this._element.Entities) { /* ... */ }
         }
 
         protected override void addObjectBody(FbxNode node, FbxFileWriterBase writer)

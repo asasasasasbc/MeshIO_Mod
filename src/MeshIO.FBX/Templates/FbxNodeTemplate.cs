@@ -143,12 +143,13 @@ namespace MeshIO.FBX.Templates
 
                     // Connection: Skin has Cluster
                     // FBX: C: "SubDeformer", <Cluster_ID_Source>, <Skin_ID_Destination>
-                    fwriter.AddConnectionSubDeformer_ClusterToSkin(cluster, skinEntity);
+                    fwriter.AddConnectionSubDeformer_ClusterToSkin(cluster, skinEntity); // Stays cluster (src) -> skin (dest)
 
-                    if (cluster.Link != null)
+                    if (cluster.Link != null) // cluster.Link is the Bone
                     {
-                        // Connection: Cluster is linked to Bone
-                        // FBX: C: "Deformer", <Cluster_ID_Source>, <Bone_ID_Destination>
+                        // Connection: Bone is linked to Cluster
+                        // Parameters for AddConnectionDeformer_ClusterToBone are (Cluster, Bone)
+                        // but internally it will make Bone the source and Cluster the destination.
                         fwriter.AddConnectionDeformer_ClusterToBone(cluster, cluster.Link);
                     }
                 }
