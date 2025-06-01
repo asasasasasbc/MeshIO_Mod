@@ -14,22 +14,18 @@ using System;
 using MeshIO.Entities.Geometries;
 using MeshIO.Entities.Skinning;
 
+// MeshIO.FBX/Templates/FbxNodeTemplate.cs
+// ... (usings)
+
 namespace MeshIO.FBX.Templates
 {
     internal class FbxNodeTemplate : FbxObjectTemplate<Node>
     {
         public override string FbxObjectName { get { return FbxFileToken.Model; } }
+        public override string FbxTypeName { get { return "Null"; } } // Default for generic nodes
 
-        // ***** THIS IS THE KEY CHANGE *****
-        public override string FbxTypeName { get { return "Null"; } } // Changed from FbxFileToken.Mesh or other
-
-        public FbxNodeTemplate(FbxNode node) : base(node, new Node())
-        {
-        }
-
-        public FbxNodeTemplate(Node root) : base(root)
-        {
-        }
+        public FbxNodeTemplate(FbxNode node) : base(node, new Node()) { }
+        public FbxNodeTemplate(Node root) : base(root) { }
 
         public override void Build(FbxFileBuilderBase builder)
         {
@@ -39,43 +35,29 @@ namespace MeshIO.FBX.Templates
 
         protected override void addObjectBody(FbxNode node, FbxFileWriterBase writer)
         {
-            node.Add(FbxFileToken.Version, 232); // Standard version for Model nodes
+            node.Add(FbxFileToken.Version, 232);
 
-            // Apply specific properties for nodes, overriding any defaults from the "Model" template.
             FbxInstanceProperties["Lcl Translation"] = new FbxProperty("Lcl Translation", "Lcl Translation", "", PropertyFlags.Animatable | PropertyFlags.Animated, _element.Transform.Translation);
             FbxInstanceProperties["Lcl Rotation"] = new FbxProperty("Lcl Rotation", "Lcl Rotation", "", PropertyFlags.Animatable | PropertyFlags.Animated, _element.Transform.EulerRotation);
             FbxInstanceProperties["Lcl Scaling"] = new FbxProperty("Lcl Scaling", "Lcl Scaling", "", PropertyFlags.Animatable | PropertyFlags.Animated, _element.Transform.Scale);
             FbxInstanceProperties["Visibility"] = new FbxProperty("Visibility", "Visibility", "", PropertyFlags.Animatable, _element.IsVisible ? 1.0 : 0.0);
 
-            // Add standard model properties often expected for Null nodes as well
             if (!FbxInstanceProperties.ContainsKey("Shading"))
                 FbxInstanceProperties["Shading"] = new FbxProperty("Shading", "bool", "", PropertyFlags.None, true);
             if (!FbxInstanceProperties.ContainsKey("Culling"))
                 FbxInstanceProperties["Culling"] = new FbxProperty("Culling", "KString", "", PropertyFlags.None, "CullingOff");
-            // Ensure "MultiLayer" is present and typically false.
             FbxInstanceProperties["MultiLayer"] = new FbxProperty("MultiLayer", "bool", "", PropertyFlags.None, false);
 
-
-            base.addObjectBody(node, writer); // This will write out FbxInstanceProperties
-
-            // These were specific to the old "Mesh" type idea, remove or ensure they are not added if type is "Null"
-            // For "Null" type, these are not strictly necessary but FBX is flexible.
-            // Let's keep them minimal for "Null" nodes.
-            // The base.addObjectBody already writes Properties70.
-            // node.Add(FbxFileToken.Shading, 'T'); // Usually for renderable objects
-            // node.Add(FbxFileToken.CullingOff, "CullingOff"); // Culling is relevant, "Culling" property above handles it
+            base.addObjectBody(node, writer);
         }
 
         public override void ApplyTemplate(FbxPropertyTemplate template)
         {
-            // Start with a copy of the generic "Model" template's properties.
             this.FbxInstanceProperties.Clear();
             foreach (var prop in template.Properties)
             {
                 this.FbxInstanceProperties.Add(prop.Key, new FbxProperty(prop.Value.Name, prop.Value.FbxType, prop.Value.Label, prop.Value.Flags, prop.Value.Value));
             }
-
-            // Override/add with custom properties from the Node element.
             foreach (Property item in this._element.Properties)
             {
                 if (this.FbxInstanceProperties.ContainsKey(item.Name))
@@ -89,105 +71,105 @@ namespace MeshIO.FBX.Templates
             }
         }
 
-
         public override void ProcessChildren(FbxFileWriterBase fwriter)
         {
-            // base.ProcessChildren(fwriter); // FbxObjectTemplate.ProcessChildren is empty
-
             // 1. Handle hierarchical child nodes (other Models/Bones)
             foreach (Node node_child in this._element.Nodes)
             {
                 fwriter.CreateHierarchicalConnection(node_child, this);
             }
 
-            // 2. Handle entities attached to this Node (Mesh, Skin, Lights, Cameras etc.)
+            // 2. Process entities attached to this Node.
+            // This ensures their FBX objects are created and definitions are ready.
             Mesh meshEntity = null;
             Skin skinEntity = null;
-            List<Entities.Entity> otherEntities = new List<Entities.Entity>();
+            List<Entities.Entity> otherDirectEntities = new List<Entities.Entity>();
 
-            // First pass: Ensure all entities are created as FBX objects
-            // This populates _objectTemplates and _definedObjects in the writer
             foreach (Entities.Entity entity in this._element.Entities)
             {
-                fwriter.EnsureFbxObjectCreated(entity);
+                fwriter.EnsureFbxObjectCreated(entity); // Critical: creates FBX object for entity and processes its children
                 if (entity is Mesh mesh) meshEntity = mesh;
                 else if (entity is Skin skin) skinEntity = skin;
-                else if (!(entity is Cluster)) otherEntities.Add(entity); // Clusters are handled via Skin
+                else if (!(entity is Cluster))
+                {
+                    otherDirectEntities.Add(entity);
+                }
             }
 
-            // 3. Connect Mesh to this Model (Node)
+            // 3. Establish connections based on identified entities.
+
+            // Connect Mesh (Geometry) to this Model (Node)
             if (meshEntity != null)
             {
-                fwriter.AddConnectionOO(meshEntity, this.GetElement()); // Model -- Mesh (Geometry)
+                // Connection: Model -> Geometry (child is Geometry, parent is Model)
+                fwriter.AddConnectionOO(meshEntity, this.GetElement());
             }
 
-            // 4. Connect Skin, Clusters, and Bones
-            if (skinEntity != null && meshEntity != null)
+            // Connect Skinning components
+            if (skinEntity != null) // Skin entity was found on this Node
             {
-                skinEntity.DeformedGeometry = meshEntity; // Internal link for context
+                // Connection: Model -> Skin (child is Skin, parent is Model)
+                // This is a key connection for DCCs to recognize the Model is skinned.
+                fwriter.AddConnectionOO(skinEntity, this.GetElement());
 
-                // Connection: Geometry (Mesh) <-> Skin
-                fwriter.AddConnectionOO(meshEntity, skinEntity);
+                if (meshEntity != null) // If there's also a mesh on this Node, Skin deforms it.
+                {
+                    // Connection: Geometry -> Skin (child is Skin, parent is Geometry)
+                    // This indicates which Geometry the Skin deformer acts upon.
+                    fwriter.AddConnectionOO(skinEntity, meshEntity);
+                }
 
+                // Skin.ProcessChildren (called during EnsureFbxObjectCreated(skinEntity))
+                // should have called EnsureFbxObjectCreated for its Clusters.
+                // Now, connect those Clusters to the Skin and their respective Bones.
                 foreach (Cluster cluster in skinEntity.Clusters)
                 {
-                    // Ensure cluster and its linked bone are processed by EnsureFbxObjectCreated
-                    // (already done in the first pass over _element.Entities if cluster was there,
-                    // or if cluster.Link was also an entity of this node)
-                    fwriter.EnsureFbxObjectCreated(cluster); // Ensure cluster itself is processed
+                    // Ensure Cluster and its Link (Bone) are created (might be redundant but safe)
+                    fwriter.EnsureFbxObjectCreated(cluster);
                     if (cluster.Link != null)
                     {
-                        fwriter.EnsureFbxObjectCreated(cluster.Link); // Ensure bone is processed
+                        fwriter.EnsureFbxObjectCreated(cluster.Link);
                     }
 
-                    // Connection: Skin <-> Cluster
-                    fwriter.AddConnectionOO(skinEntity, cluster);
+                    // Connection: Skin -> Cluster (child is Cluster, parent is Skin)
+                    fwriter.AddConnectionOO(cluster, skinEntity);
 
                     if (cluster.Link != null)
                     {
-                        // Connection: Cluster <-> Bone (Link)
+                        // Connection: Cluster -> Bone (child is Cluster, parent is Bone)
                         fwriter.AddConnectionOO(cluster, cluster.Link);
                     }
                 }
             }
 
-            // 5. Connect other direct entities (Lights, Cameras) to this Model
-            foreach (var entity in otherEntities)
+            // Connect other direct entities (Lights, Cameras) to this Model
+            foreach (var entity in otherDirectEntities)
             {
-                // Check if it's not already connected through another mechanism (e.g. Skin handling its Clusters)
-                if (!(entity is Skin) && !(entity is Cluster))
-                {
-                    fwriter.AddConnectionOO(entity, this.GetElement()); // Model -- OtherEntity
-                }
+                // Connection: Model -> OtherEntity (child is OtherEntity, parent is Model)
+                fwriter.AddConnectionOO(entity, this.GetElement());
             }
 
-            // 6. Connect Materials to this Model
+            // Connect Materials to this Model
             foreach (Shaders.Material mat in this._element.Materials)
             {
                 fwriter.EnsureFbxObjectCreated(mat);
-                fwriter.AddConnectionOO(mat, this.GetElement()); // Model -- Material
+                // Connection: Model -> Material (child is Material, parent is Model)
+                fwriter.AddConnectionOO(mat, this.GetElement());
             }
         }
-
         protected override void addProperties(Dictionary<string, FbxProperty> properties)
         {
-            // Lcl Translation, Rotation, Scaling are now handled in addObjectBody via FbxInstanceProperties
-            // Visibility is also handled there.
-            // So, we only need to add any *other* custom properties here.
-
             var standardProps = new HashSet<string> { "Lcl Translation", "Lcl Rotation", "Lcl Scaling", "Visibility" };
-
             foreach (var prop in properties)
             {
-                if (!standardProps.Contains(prop.Key) && !_element.Properties.Contains(prop.Key)) // Avoid adding if already directly set on _element or is standard
+                if (!standardProps.Contains(prop.Key) && !_element.Properties.Contains(prop.Key))
                 {
                     _element.Properties.Add(prop.Value.ToProperty());
                 }
             }
-            // base.addProperties(properties); // Don't call base if it also tries to add these.
         }
 
-        protected void processChildren(FbxFileBuilderBase builder)
+        protected void processChildren(FbxFileBuilderBase builder) // This is for READING
         {
             foreach (FbxConnection c in builder.GetChildren(Id))
             {
@@ -196,14 +178,12 @@ namespace MeshIO.FBX.Templates
                     builder.Notify($"[{_element.GetType().FullName}] child object not found {c.ChildId}", Core.NotificationType.Warning);
                     continue;
                 }
-
                 addChild(template.GetElement());
-
                 template.Build(builder);
             }
         }
 
-        protected void addChild(Element3D element)
+        protected void addChild(Element3D element) // This is for READING
         {
             switch (element)
             {
