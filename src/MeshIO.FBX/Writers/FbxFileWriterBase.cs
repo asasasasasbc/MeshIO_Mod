@@ -350,22 +350,20 @@ namespace MeshIO.FBX.Writers
             return worldMatrix;
         }
 
+        // In MeshIO.FBX/Writers/FbxFileWriterBase.cs
+
         private FbxNode nodePoses()
         {
             FbxNode posesNode = new FbxNode(FbxFileToken.Pose);
             int poseCount = 0;
             HashSet<Node> nodesInBindPose = new HashSet<Node>();
+            Node skinnedModelNode = null; // The Node instance representing the mesh/model being skinned
+            Skin skinDeformerInstance = null; // The Skin instance
 
-            foreach (var objTemplate in _objectTemplates.Values)
-            {
-                if (objTemplate.GetElement() is Bone bone)
-                {
-                    nodesInBindPose.Add(bone);
-                }
-            }
-
-            Node skinnedModelNode = null;
-            Skin skinDeformer = null; // To find the skin deformer associated with the model
+            // First, find the skinned model node and its skin deformer.
+            // This assumes there's at most one primary skinned model with a Skin entity for this logic.
+            // If multiple independent skinned models exist, this part might need to be more sophisticated
+            // or the concept of a single "BindPose" might need to be re-evaluated (e.g. multiple Pose nodes).
             foreach (var objTemplate in _objectTemplates.Values)
             {
                 if (objTemplate.GetElement() is Node modelNode)
@@ -375,83 +373,160 @@ namespace MeshIO.FBX.Writers
                         if (entity is Skin skin && skin.DeformedGeometry != null)
                         {
                             skinnedModelNode = modelNode;
-                            skinDeformer = skin; // Capture the skin deformer
-                            nodesInBindPose.Add(skinnedModelNode);
-                            break;
+                            skinDeformerInstance = skin;
+                            nodesInBindPose.Add(skinnedModelNode); // Add the mesh node itself
+                                                                   // Console.WriteLine($"DEBUG: Added skinnedModelNode to BindPose: {skinnedModelNode.Name} (ID: {skinnedModelNode.Id})");
+                            break; // Found the primary skinned model
                         }
                     }
                 }
-                if (skinnedModelNode != null) break;
+                if (skinnedModelNode != null) break; // Stop searching once found
+            }
+
+            // If a skin deformer was found, add all bones (and their ancestors up to the scene root)
+            // that are linked by its clusters.
+            if (skinDeformerInstance != null)
+            {
+                // Console.WriteLine($"DEBUG: Processing skinDeformerInstance: {skinDeformerInstance.Name}");
+                foreach (Cluster cluster in skinDeformerInstance.Clusters)
+                {
+                    if (cluster.Link != null) // cluster.Link is a MeshIO.Node (specifically a Bone or its parent)
+                    {
+                        // Console.WriteLine($"DEBUG: Processing cluster.Link: {cluster.Link.Name} (ID: {cluster.Link.Id})");
+                        Node currentBoneOrParent = cluster.Link;
+                        while (currentBoneOrParent != null && currentBoneOrParent != this.Scene.RootNode)
+                        {
+                            if (nodesInBindPose.Add(currentBoneOrParent)) // Add returns true if item was added
+                            {
+                                // Console.WriteLine($"DEBUG: Added Bone/Ancestor to BindPose: {currentBoneOrParent.Name} (ID: {currentBoneOrParent.Id})");
+                            }
+
+                            if (currentBoneOrParent.Parent is Node parentNode)
+                            {
+                                currentBoneOrParent = parentNode;
+                            }
+                            else
+                            {
+                                break; // No more parents or parent is not a Node
+                            }
+                        }
+                    }
+                }
+            }
+            // As a fallback or for non-skinned armatures, one might add all existing bones.
+            // However, for a "BindPose" related to skinning, the above logic is more targeted.
+            // If you need to support general bind poses for non-skinned hierarchies, you might add:
+            else
+            {
+                // Console.WriteLine("DEBUG: No skinDeformerInstance found. Looking for any bones.");
+                foreach (var objTemplate in _objectTemplates.Values)
+                {
+                    if (objTemplate.GetElement() is Bone bone) // Check if it's specifically a Bone type
+                    {
+                        // Console.WriteLine($"DEBUG: Found loose Bone: {bone.Name} (ID: {bone.Id})");
+                        Node currentBoneOrParent = bone;
+                        while (currentBoneOrParent != null && currentBoneOrParent != this.Scene.RootNode)
+                        {
+                            if (nodesInBindPose.Add(currentBoneOrParent))
+                            {
+                                // Console.WriteLine($"DEBUG: Added Bone/Ancestor (no skin): {currentBoneOrParent.Name} (ID: {currentBoneOrParent.Id})");
+                            }
+
+                            if (currentBoneOrParent.Parent is Node parentNode)
+                            {
+                                currentBoneOrParent = parentNode;
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
             }
 
             if (nodesInBindPose.Any())
             {
-                poseCount = 1;
-                long poseNodeObjectId = Scene.GetIdOrDefault();
-                unchecked { poseNodeObjectId = (poseNodeObjectId == 0 ? 1 : poseNodeObjectId) * 31 + 1001; }
+                poseCount = 1; // Assuming one "BindPose" for now
+
+                // Generate a somewhat unique ID for the Pose object itself.
+                // This ID is for the FBX "Pose" object, not a MeshIO element.
+                long poseFbxObjectId = Scene.GetIdOrDefault(); // Start with scene ID or a default
+                unchecked // Allow overflow for hashing effect
+                {
+                    // Combine with a hash of the nodes involved to make it more unique if multiple poses were ever needed
+                    int nodesHash = 0;
+                    foreach (Node n in nodesInBindPose)
+                    {
+                        nodesHash = (nodesHash * 31) + (n.Id?.GetHashCode() ?? 0);
+                    }
+                    poseFbxObjectId = (poseFbxObjectId == 0 ? 1 : poseFbxObjectId) * 31 + 1001 + nodesHash;
+                    if (poseFbxObjectId < 0) poseFbxObjectId = -poseFbxObjectId; // Ensure positive
+                    if (poseFbxObjectId == 0) poseFbxObjectId = DateTime.Now.Ticks; // Ultimate fallback
+                }
 
 
-                FbxNode bindPoseNode = posesNode.Add("Pose", poseNodeObjectId, "BindPose", "BindPose");
+                FbxNode bindPoseNode = posesNode.Add("Pose", poseFbxObjectId, "BindPose", "BindPose");
                 bindPoseNode.Add("Type", "BindPose");
                 bindPoseNode.Add("NbPoseNodes", nodesInBindPose.Count);
 
+                // Console.WriteLine($"DEBUG: Creating BindPose with {nodesInBindPose.Count} nodes. Pose Object ID: {poseFbxObjectId}");
+
                 foreach (Node nodeToPose in nodesInBindPose)
                 {
-                    if (!nodeToPose.Id.HasValue || !_objectTemplates.ContainsKey(nodeToPose.Id.Value)) continue;
+                    if (!nodeToPose.Id.HasValue)
+                    {
+                        // Console.WriteLine($"DEBUG: nodeToPose {nodeToPose.Name} has no ID, skipping.");
+                        continue;
+                    }
+                    if (!_objectTemplates.ContainsKey(nodeToPose.Id.Value))
+                    {
+                        // This should not happen if EnsureFbxObjectCreated was called for all relevant nodes
+                        // Console.WriteLine($"DEBUG: nodeToPose {nodeToPose.Name} (ID: {nodeToPose.Id}) not in _objectTemplates, skipping. This might indicate an issue with EnsureFbxObjectCreated.");
+                        EnsureFbxObjectCreated(nodeToPose); // Try to create it now, though it's late
+                        if (!_objectTemplates.ContainsKey(nodeToPose.Id.Value)) continue; // Still not there, skip
+                    }
 
                     FbxNode poseNodeEntry = bindPoseNode.Add("PoseNode");
-                    poseNodeEntry.Add("Node", (long)nodeToPose.Id.Value);
+                    poseNodeEntry.Add("Node", (long)nodeToPose.Id.Value); // Use the MeshIO Node's ID
 
-                    Matrix4 worldBindMatrix = Matrix4.Identity;
+                    // Directly calculate the world matrix for the node.
+                    // This assumes nodeToPose.Transform and its parent hierarchy
+                    // correctly represent the bind pose at the time of export.
+                    Matrix4 worldBindMatrix = CalculateWorldMatrix(nodeToPose);
 
-                    if (nodeToPose is Bone boneForPose)
-                    {
-                        Cluster foundCluster = _objectTemplates.Values
-                            .Select(ot => ot.GetElement()).OfType<Skin>()
-                            .SelectMany(s => s.Clusters).FirstOrDefault(c => c.Link == boneForPose);
-
-                        if (foundCluster != null) worldBindMatrix = foundCluster.TransformMatrix;
-                        else worldBindMatrix = CalculateWorldMatrix(boneForPose);
-                    }
-                    else if (nodeToPose == skinnedModelNode && skinDeformer != null)
-                    {
-                        // For the skinned model node, its bind pose matrix should be its world transform at bind time.
-                        // This typically matches the TransformLinkMatrix of the clusters deforming its mesh.
-                        Cluster anyClusterForThisMesh = skinDeformer.Clusters.FirstOrDefault();
-
-                        if (anyClusterForThisMesh != null)
-                        {
-                            worldBindMatrix = anyClusterForThisMesh.TransformLinkMatrix;
-                        }
-                        else
-                        {
-                            worldBindMatrix = CalculateWorldMatrix(skinnedModelNode); // Fallback
-                        }
-                    }
+                    // double[] matrixArray = worldBindMatrix.ToRowMajorArray();
+                    // string matrixStr = string.Join(",", matrixArray.Select(d => d.ToString("F7")));
+                    // Console.WriteLine($"DEBUG: PoseNode for {nodeToPose.Name} (ID: {nodeToPose.Id.Value}), Matrix: [{matrixStr}]");
 
                     poseNodeEntry.Add("Matrix", worldBindMatrix.ToRowMajorArray());
                 }
             }
 
-            if (posesNode.Nodes.Any(n => n.Name == "Pose"))
+            // Add the "Count" node at the beginning of posesNode children if any "Pose" sub-nodes exist.
+            if (posesNode.Nodes.Any(n => n.Name == "Pose")) // Check if any "Pose" sub-node was actually added
             {
                 posesNode.Nodes.Insert(0, new FbxNode("Count", poseCount));
             }
-            else
+            else // No "Pose" sub-nodes were added (e.g., nodesInBindPose was empty)
             {
-                posesNode.Add("Count", 0);
+                posesNode.Add("Count", 0); // Add Count: 0 if no poses
             }
 
+            // Register "Pose" in _definedObjects if a pose was actually created.
+            // This is used by nodeDefinitions() to declare object types.
             if (poseCount > 0)
             {
                 if (!_definedObjects.ContainsKey(FbxFileToken.Pose))
                 {
                     _definedObjects.Add(FbxFileToken.Pose, new List<IFbxObjectTemplate>());
+                    // Note: The "Pose" object itself (the one with poseFbxObjectId) isn't an IFbxObjectTemplate
+                    // in the current system. _definedObjects for "Pose" is more of a flag for nodeDefinitions.
+                    // This might need refinement if actual FbxPoseTemplate objects were introduced.
                 }
             }
             return posesNode;
         }
-
         private FbxNode nodeObjects()
         {
             FbxNode objectsNode = new FbxNode(FbxFileToken.Objects);

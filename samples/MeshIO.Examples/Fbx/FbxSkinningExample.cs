@@ -4,20 +4,40 @@ using MeshIO.FBX;
 using MeshIO.Entities;
 using MeshIO.Entities.Geometries;
 using MeshIO.Entities.Geometries.Layers;
-using MeshIO.Entities.Skinning; // For Skin, Cluster
+using MeshIO.Entities.Skinning;
 using MeshIO.Shaders;
 using CSMath;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using MeshIO.Examples.Common; // For NotificationHelper
-// using MeshIO.Utils; // Matrix4Extensions might not be needed if using CSMath directly or if MeshIO handles it
+using MeshIO.Examples.Common;
 
 namespace MeshIO.Examples.Fbx
 {
     public static class FbxSkinningExample
     {
+        // ... (printMatrix and unityMatrix methods remain the same) ...
+        public static string printMatrix(Matrix4 m)
+        {
+            string ans = "";
+            ans += $"{m.m00:F2} {m.m10:F2} {m.m20:F2} {m.m30:F2}\n"; // CSMath uses 1-based indexing
+            ans += $"{m.m01:F2} {m.m11:F2} {m.m21:F2} {m.m31:F2}\n";
+            ans += $"{m.m02:F2} {m.m12:F2} {m.m22:F2} {m.m32:F2}\n";
+            ans += $"{m.m03:F2} {m.m13:F2} {m.m23:F2} {m.m33:F2}\n";
+            return ans;
+        }
+        public static Matrix4 unityMatrix()
+        { // CSMath Matrix4.Identity
+            return new Matrix4(
+                new double[] {
+                 1.000001  ,0 ,0 ,0 ,
+                 0  ,1.000001 ,0 ,0 ,
+                 0  ,0 , 1.000001 ,0,
+                 0  ,0      ,0    ,1.0
+                }
+             );
+        }
+
         public static void ExportSkinnedRectangle(string outputPath, bool binary = true)
         {
             Scene scene = new Scene { Name = "SkinnedRectScene" };
@@ -25,156 +45,107 @@ namespace MeshIO.Examples.Fbx
             // 1. Create Skeleton
             Bone skeletonRoot = new Bone("Armature") { IsSkeletonRoot = true };
             skeletonRoot.Transform.Translation = new XYZ(0, 0, 0);
-            scene.RootNode.AddChildNode(skeletonRoot); // Use AddNode for consistency
+            scene.RootNode.AddChildNode(skeletonRoot);
 
-            Bone bone1 = new Bone("Bone1") { Length = 1.0 }; // IsSkeletonRoot defaults to false
-            bone1.Transform.Translation = new XYZ(0, 0.5, 0);
+            Bone bone1 = new Bone("Bone1") { Length = 1.0 };
+            bone1.Transform.Translation = new XYZ(1, 0.0, 0);
             skeletonRoot.AddChildNode(bone1);
 
             Bone bone2 = new Bone("Bone2") { Length = 1.0 };
-            bone2.Transform.Translation = new XYZ(0, 0.5, 0);
+            bone2.Transform.EulerRotation = new XYZ(45, 0, 0);
+            bone2.Transform.Translation = new XYZ(0, 1.0, 0); // Relative to bone1
             bone1.AddChildNode(bone2);
 
-            // Force ID generation (MeshIO should handle this, but good for explicitness)
-            scene.RootNode.GetIdOrDefault();
-            skeletonRoot.GetIdOrDefault();
-            bone1.GetIdOrDefault();
-            bone2.GetIdOrDefault();
-
             // 2. Create Mesh and its Node
-            // In MeshIO, a Mesh is an Entity that can be attached to a Node.
-            // The FbxWriter should interpret a Node with a Mesh entity as a "Model" of type "Mesh".
             Mesh rectMesh = new Mesh { Name = "RectangleMesh" };
-            rectMesh.GetIdOrDefault(); // Assign ID to the mesh itself
-
-            // Vertices
             rectMesh.Vertices.AddRange(new List<XYZ>
             {
-                new XYZ(-0.5, -1.0, 0), new XYZ(0.5, -1.0, 0),
-                new XYZ(-0.5,  0.0, 0), new XYZ(0.5,  0.0, 0),
-                new XYZ(-0.5,  1.0, 0), new XYZ(0.5,  1.0, 0)
+                new XYZ(-0.5, 0.0, 0.0), new XYZ(0.5, 0.0, 0.0),
+                new XYZ(-0.5, 1.0, 0.0), new XYZ(0.5, 1.0, 0.0),
+                new XYZ(-0.5, 2.0, 0.0), new XYZ(0.5, 2.0, 0.0)
             });
-
-            // Faces
             rectMesh.Polygons.AddRange(new List<Triangle>
             {
                 new Triangle(0, 1, 3), new Triangle(0, 3, 2),
                 new Triangle(2, 3, 5), new Triangle(2, 5, 4)
             });
 
-            // Create the Node that will hold the mesh geometry and skinning info
             Node meshNode = new Node { Name = "SkinnedRectangleNode" };
+            meshNode.Transform.Translation = new XYZ(0, 0, 0); // Mesh node at world origin LOCAL transform
+            scene.RootNode.AddChildNode(meshNode); // **** CHANGED: Mesh is child of Scene Root ****
+            meshNode.Entities.Add(rectMesh);
 
-            meshNode.Transform.Translation = new XYZ(0, 0, 0); // Mesh at origin
-            //scene.RootNode.Nodes.Add(meshNode);
-            //bone1.Nodes.Add(meshNode);
-            skeletonRoot.AddChildNode(meshNode);
-            meshNode.GetIdOrDefault();
-
-            // Add the Mesh as the primary geometry for this Node
-            // MeshIO's FbxWriter should use this to create a Model of type "Mesh"
-            // and place geometry data directly within that Model block.
-            meshNode.Entities.Add(rectMesh); // This is key
-
-            // Add a simple material to the mesh node
             var defaultMaterial = new MeshIO.Shaders.Material { Name = "DefaultMat", DiffuseColor = new Color(128, 128, 128) };
-            meshNode.Materials.Add(defaultMaterial); // Material attached to the Node
-            defaultMaterial.GetIdOrDefault();
-
-            // Add LayerElementMaterial to mesh
-            var materialLayer = new LayerElementMaterial
-            {
-                Name = "RectMatLayer",
-                MappingMode = MappingMode.AllSame,
-                ReferenceMode = ReferenceMode.IndexToDirect
-            };
-            materialLayer.Indexes.Add(0); // All polygons use material index 0 from meshNode.Materials
+            meshNode.Materials.Add(defaultMaterial);
+            var materialLayer = new LayerElementMaterial { Name = "RectMatLayer", MappingMode = MappingMode.AllSame, ReferenceMode = ReferenceMode.IndexToDirect };
+            materialLayer.Indexes.Add(0);
             rectMesh.Layers.Add(materialLayer);
-
-
-            // 4. Create Skin Deformer
+            
             Skin skin = new Skin { Name = "RectangleSkin" };
-            // The Skin deformer should also be an Entity of the meshNode
             meshNode.Entities.Add(skin);
-            skin.GetIdOrDefault();
-            skin.DeformedGeometry = rectMesh; // Link skin to the specific mesh geometry
+            skin.DeformedGeometry = rectMesh;
 
-            // 5. Define Bind Pose Matrices
-            // These matrices define the state of bones and the mesh at the moment of binding.
-            // For FBX, Cluster.TransformMatrix is the world transform of the bone at bind time.
-            // Cluster.TransformLinkMatrix is the world transform of the mesh (Geometry/Model) at bind time.
+            // 5. Define Bind Pose Matrices (World Space)
+            //Matrix4 bone1BindGlobalMatrix = bone1.GetGlobalMatrix(scene.RootNode); // World: Ty=1
+            //Matrix4 bone2BindGlobalMatrix = bone2.GetGlobalMatrix(scene.RootNode); // World: Ty=2
+            //Matrix4 meshNodeBindGlobalMatrix = meshNode.GetGlobalMatrix(scene.RootNode); // World: Identity (since it's child of root and local transform is identity)
 
-            // Calculate global bind matrices (important if your hierarchy isn't flat at origin)
-            Matrix4 skeletonRootBindGlobalMatrix = skeletonRoot.GetGlobalMatrix(scene.RootNode);
+            // 计算BindPose下的全局矩阵
+            Matrix4 meshNodeBindGlobalMatrix = meshNode.GetGlobalMatrix(scene.RootNode);
             Matrix4 bone1BindGlobalMatrix = bone1.GetGlobalMatrix(scene.RootNode);
             Matrix4 bone2BindGlobalMatrix = bone2.GetGlobalMatrix(scene.RootNode);
-            Matrix4 meshNodeBindGlobalMatrix = meshNode.GetGlobalMatrix(scene.RootNode);
 
+            Console.WriteLine("meshNodeBindGlobalMatrix (should be Identity):\n" + printMatrix(meshNodeBindGlobalMatrix));
+
+            Console.WriteLine("bone1BindGlobalMatrix (should be Ty=1):\n" + printMatrix(bone1BindGlobalMatrix));
+            Console.WriteLine("bone2BindGlobalMatrix (should be Ty=2):\n" + printMatrix(bone2BindGlobalMatrix));
+            
 
             // 6. Create Clusters
-            // Cluster for Bone1
             Cluster cluster1 = new Cluster { Name = "Cluster_Bone1", Link = bone1 };
-            cluster1.GetIdOrDefault();
             cluster1.Indexes.AddRange(new int[] { 0, 1, 2, 3 });
             cluster1.Weights.AddRange(new double[] { 1.0, 1.0, 0.5, 0.5 });
-            // TransformMatrix: The world transformation of the bone (Link) at the time of binding.
-            cluster1.TransformMatrix = bone1BindGlobalMatrix;
-            // TransformLinkMatrix: The world transformation of the
-            //                      Geometry (DeformedGeometry) that this cluster deforms
-            //                      at the time of binding.
-            cluster1.TransformLinkMatrix = meshNodeBindGlobalMatrix;
+            Matrix4 tmp = meshNodeBindGlobalMatrix;
+            CSMath.Matrix4.Inverse(bone1BindGlobalMatrix, out tmp); // Added for Linked transform matrix
+            cluster1.TransformMatrix = tmp;     // Should be Identity
+            cluster1.TransformLinkMatrix = bone1BindGlobalMatrix;
             skin.Clusters.Add(cluster1);
 
-            // Cluster for Bone2
             Cluster cluster2 = new Cluster { Name = "Cluster_Bone2", Link = bone2 };
-            cluster2.GetIdOrDefault();
             cluster2.Indexes.AddRange(new int[] { 2, 3, 4, 5 });
             cluster2.Weights.AddRange(new double[] { 0.5, 0.5, 1.0, 1.0 });
-            cluster2.TransformMatrix = bone2BindGlobalMatrix;
-            cluster2.TransformLinkMatrix = meshNodeBindGlobalMatrix;
+            CSMath.Matrix4.Inverse(bone2BindGlobalMatrix, out tmp); // Added for Linked transform matrix
+            cluster2.TransformMatrix = tmp;     // Should be Identity
+            cluster2.TransformLinkMatrix = bone2BindGlobalMatrix;
             skin.Clusters.Add(cluster2);
+            
+            //New
+           
 
-            // 7. Add Bind Pose Information to the Scene
-            // This is crucial for Blender to correctly interpret the setup.
-            // The Pose object in FBX stores the bind pose transformations for nodes.
-            // MeshIO might handle this implicitly if a Skin deformer is present and linked,
-            // but it's good to be aware of. We'll rely on MeshIO's FbxWriter to create
-            // the `Pose` block correctly if it detects skinning.
-            // If MeshIO doesn't automatically create a "BindPose" `Pose` object including
-            // the meshNode, this might still be an issue.
-            //
-            // Let's assume MeshIO's FbxWriter will create the Pose block based on the
-            // Skin and Cluster information. If not, MeshIO's API would need a way to
-            // explicitly define a scene-level BindPose.
-
-            // 8. FBX Writer Options
             FbxWriterOptions options = new FbxWriterOptions
             {
                 IsBinaryFormat = binary,
-                Version = FbxVersion.v7400, // Keep this or try v7500 if issues persist
-                // Potentially add an option here if MeshIO supports it, e.g., to enforce
-                // specific node type mappings or bind pose generation.
+                Version = FbxVersion.v7400,
             };
 
-            // 9. Write to File
             try
             {
                 Console.WriteLine($"Exporting skinned rectangle to: {outputPath}");
+                scene.GetIdOrDefault(); // Ensure all IDs are set
                 FbxWriter.Write(outputPath, scene, options, NotificationHelper.LogConsoleNotification);
                 Console.WriteLine("Export complete.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error during FBX export: {ex.Message}");
-                Console.WriteLine(ex.StackTrace);
+                Console.WriteLine($"Error during FBX export: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
         public static void RunExample()
         {
             string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            string filePath = Path.Combine(desktopPath, "SkinnedRectangle_MeshIO_v2.fbx"); // New name for testing
-            ExportSkinnedRectangle(filePath, false); // Export as ASCII for easy inspection
+            string filePath = Path.Combine(desktopPath, "my_skinned_rect_v3.fbx");
+            ExportSkinnedRectangle(filePath, false);
 
             Console.WriteLine($"\nAttempting to read back {filePath} (FBX structure parse):");
             try
@@ -193,20 +164,19 @@ namespace MeshIO.Examples.Fbx
         }
     }
 
-    // Helper extension method (if not already in MeshIO.Utils or similar)
-    // to get global matrix. Ensure your CSMath.Matrix4 has appropriate multiplication.
-    public static class TransformExtensions
+    public static class NodeExtensions // Renamed for clarity
     {
-        public static Matrix4 GetGlobalMatrix(this Node node, Node rootSceneNode)
+        public static Matrix4 GetGlobalMatrix(this Node node, Node stopAtParent = null)
         {
-            Matrix4 globalMatrix = node.Transform.Matrix; // Local matrix
-            var parent = node.Parent; // Assuming Transform has an Owner (Node) property
-            //
-            while (parent != null && parent != rootSceneNode && parent is Node) // Go up until the scene root or null
+            if (node == null) return Matrix4.Identity;
+
+            Matrix4 globalMatrix = node.Transform.Matrix; // Start with the node's local matrix
+            Node currentParent = (Node)node.Parent;
+
+            while (currentParent != null && currentParent != stopAtParent)
             {
-                var parent_node = parent as Node;
-                globalMatrix = parent_node.Transform.Matrix * globalMatrix; // Pre-multiply by parent's local matrix
-                parent = parent_node.Parent;
+                globalMatrix = currentParent.Transform.Matrix * globalMatrix; // Pre-multiply by parent's local matrix
+                currentParent = (Node)currentParent.Parent;
             }
             return globalMatrix;
         }
