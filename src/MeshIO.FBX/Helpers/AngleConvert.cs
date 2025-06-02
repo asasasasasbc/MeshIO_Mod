@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Numerics; // For a simple Vector3, or you can define your own.
                        // If you're in Unity, use UnityEngine.Vector3 and Mathf.
-namespace MeshIO.Examples.Common
+namespace MeshIO.FBX.Helpers
 {
     // If not in Unity, define a basic Vector3.
     // If in Unity, remove this and use UnityEngine.Vector3.

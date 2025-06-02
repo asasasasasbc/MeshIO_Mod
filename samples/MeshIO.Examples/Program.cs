@@ -38,7 +38,7 @@ namespace MeshIO.Examples
 
             if (File.Exists(jsonInputPath))
             {
-                RotationOrder[] allOrders = (RotationOrder[])Enum.GetValues(typeof(RotationOrder));
+                //RotationOrder[] allOrders = (RotationOrder[])Enum.GetValues(typeof(RotationOrder));
                 exportSkeleton(jsonInputPath, fbxOutputPath);
             }
             else

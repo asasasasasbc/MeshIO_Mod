@@ -9,7 +9,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MeshIO.Examples.Common;     // For NotificationHelper
-
+using MeshIO.FBX.Helpers; //AngleConvert
 namespace MeshIO.Examples.Fbx
 {
     public static class FbxJsonSkeletonExporter
