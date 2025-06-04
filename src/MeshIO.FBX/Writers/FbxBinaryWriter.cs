@@ -45,7 +45,7 @@ namespace MeshIO.FBX
 
 			// Wrap in a memory stream to guarantee seeking
 			this.memory = new MemoryStream();
-			this.stream = new BinaryWriter(this.memory, Encoding.ASCII);
+			this.stream = new BinaryWriter(this.memory, Encoding.UTF8); //Change to UTF-8 to allow non-alpha characters
 		}
 
 		/// <summary>
@@ -145,8 +145,8 @@ namespace MeshIO.FBX
 				}
 				str = sb.ToString();
 			}
-			var bytes = Encoding.ASCII.GetBytes(str);
-			stream.Write(bytes.Length);
+			var bytes = Encoding.UTF8.GetBytes(str); //Change to UTF-8 to allow non-alpha characters
+            stream.Write(bytes.Length);
 			stream.Write(bytes);
 		}
 
@@ -241,8 +241,8 @@ namespace MeshIO.FBX
 			else
 			{
 				this.nodePath.Push(node.Name ?? "");
-				var name = string.IsNullOrEmpty(node.Name) ? null : Encoding.ASCII.GetBytes(node.Name);
-				if (name != null && name.Length > byte.MaxValue)
+				var name = string.IsNullOrEmpty(node.Name) ? null : Encoding.UTF8.GetBytes(node.Name); //Change to UTF-8 to allow non-alpha characters
+                if (name != null && name.Length > byte.MaxValue)
 				{
 					throw new FbxException(this.stream.BaseStream.Position,
 						"Node name is too long");

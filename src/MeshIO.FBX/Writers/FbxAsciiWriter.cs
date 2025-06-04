@@ -79,8 +79,8 @@ namespace MeshIO.FBX
 				this.buildString(n, sb, this.Root.Version >= FbxVersion.v7100);
 				sb.Append('\n');
 			}
-			var b = Encoding.ASCII.GetBytes(sb.ToString());
-			this._stream.Write(b, 0, b.Length);
+			var b = Encoding.UTF8.GetBytes(sb.ToString());//Change to UTF-8 to allow non-alpha characters
+            this._stream.Write(b, 0, b.Length);
 		}
 
 		/// <inheritdoc/>

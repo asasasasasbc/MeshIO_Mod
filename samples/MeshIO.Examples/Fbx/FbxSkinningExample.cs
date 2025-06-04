@@ -47,11 +47,11 @@ namespace MeshIO.Examples.Fbx
             skeletonRoot.Transform.Translation = new XYZ(0, 0, 0);
             scene.RootNode.AddChildNode(skeletonRoot);
 
-            Bone bone1 = new Bone("Bone1") { Length = 1.0 };
+            Bone bone1 = new Bone("Bone1中文") { Length = 1.0 };
             bone1.Transform.Translation = new XYZ(1, 0.0, 0);
             skeletonRoot.AddChildNode(bone1);
 
-            Bone bone2 = new Bone("Bone2") { Length = 1.0 };
+            Bone bone2 = new Bone("Bone2の") { Length = 1.0 };
             bone2.Transform.EulerRotation = new XYZ(45, 0, 0);
             bone2.Transform.Translation = new XYZ(0, 1.0, 0); // Relative to bone1
             bone1.AddChildNode(bone2);
@@ -166,16 +166,23 @@ namespace MeshIO.Examples.Fbx
 
     public static class NodeExtensions // Renamed for clarity
     {
+        public static Matrix4 GetMatrix4(Transform t)
+        {
+            var pos = t.Translation;
+            var rot = t.EulerRotation;
+
+            return t.Matrix;
+        }
         public static Matrix4 GetGlobalMatrix(this Node node, Node stopAtParent = null)
         {
             if (node == null) return Matrix4.Identity;
 
-            Matrix4 globalMatrix = node.Transform.Matrix; // Start with the node's local matrix
+            Matrix4 globalMatrix = GetMatrix4(node.Transform); // Start with the node's local matrix
             Node currentParent = (Node)node.Parent;
 
             while (currentParent != null && currentParent != stopAtParent)
             {
-                globalMatrix = currentParent.Transform.Matrix * globalMatrix; // Pre-multiply by parent's local matrix
+                globalMatrix = GetMatrix4(currentParent.Transform) * globalMatrix; // Pre-multiply by parent's local matrix
                 currentParent = (Node)currentParent.Parent;
             }
             return globalMatrix;

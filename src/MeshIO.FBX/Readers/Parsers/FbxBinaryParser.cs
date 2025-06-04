@@ -32,8 +32,8 @@ namespace MeshIO.FBX.Readers.Parsers
 			if (!stream.CanSeek)
 				throw new ArgumentException("The stream must support seeking. Try reading the data into a buffer first");
 
-			_stream = new BinaryReader(stream, Encoding.ASCII);
-			_errorLevel = errorLevel;
+			_stream = new BinaryReader(stream, Encoding.UTF8); //Change to UTF-8 to allow non-alpha characters
+            _errorLevel = errorLevel;
 		}
 
 		/// <summary>
@@ -51,9 +51,9 @@ namespace MeshIO.FBX.Readers.Parsers
 			var numProperties = document.Version >= FbxVersion.v7500 ? _stream.ReadInt64() : _stream.ReadInt32();
 			var propertyListLen = document.Version >= FbxVersion.v7500 ? _stream.ReadInt64() : _stream.ReadInt32();
 			var nameLen = _stream.ReadByte();
-			var name = nameLen == 0 ? "" : Encoding.ASCII.GetString(_stream.ReadBytes(nameLen));
+			var name = nameLen == 0 ? "" : Encoding.UTF8.GetString(_stream.ReadBytes(nameLen));//Change to UTF-8 to allow non-alpha characters
 
-			if (endOffset == 0)
+            if (endOffset == 0)
 			{
 				// The end offset should only be 0 in a null node
 				if (_errorLevel >= ErrorLevel.Checked && (numProperties != 0 || propertyListLen != 0 || !string.IsNullOrEmpty(name)))
@@ -177,7 +177,7 @@ namespace MeshIO.FBX.Readers.Parsers
 					return readArray(br => br.ReadBoolean(), typeof(bool));
 				case 'S':
 					var len = _stream.ReadInt32();
-					var str = len == 0 ? "" : Encoding.ASCII.GetString(_stream.ReadBytes(len));
+					var str = len == 0 ? "" : Encoding.UTF8.GetString(_stream.ReadBytes(len)); //Change to UTF-8 to allow non-alpha characters
 					// Convert \0\1 to '::' and reverse the tokens
 					if (str.Contains(binarySeparator))
 					{
