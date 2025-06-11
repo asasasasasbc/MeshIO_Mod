@@ -86,7 +86,7 @@ namespace MeshIO.FBX.Templates
 			switch (layer)
 			{
 				case LayerElementBinormal bnormals:
-					node.Add("Binormals", bnormals.Normals.SelectMany(x => x.ToEnumerable()).ToArray());
+					node.Add("Binormals", bnormals.Binormals.SelectMany(x => x.ToEnumerable()).ToArray());
 					node.Add("BinormalsW", bnormals.Weights.ToArray());
 					indexesName = "BinormalsIndex";
 					break;

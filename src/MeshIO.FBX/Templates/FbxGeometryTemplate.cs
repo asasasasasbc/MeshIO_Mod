@@ -135,7 +135,7 @@ namespace MeshIO.FBX.Templates
 
 			if (node.TryGetNode("Binormals", out FbxNode normals))
 			{
-				layer.Normals = arrToXYZ(arrToDoubleArray(normals.Value as IEnumerable));
+				layer.Binormals = arrToXYZ(arrToDoubleArray(normals.Value as IEnumerable));
 			}
 
 			if (node.TryGetNode("BinormalsW", out FbxNode normalsw))

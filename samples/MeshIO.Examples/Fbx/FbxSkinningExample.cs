@@ -70,6 +70,26 @@ namespace MeshIO.Examples.Fbx
                 new Triangle(2, 3, 5), new Triangle(2, 5, 4)
             });
 
+            //Add normals and bitangents:======
+            // 4. 创建并填充 Bitangent (Binormal) 层
+            LayerElementBinormal bitangentLayer = new LayerElementBinormal
+            {
+                Name = "BitangentLayer",
+                MappingMode = MappingMode.ByVertex, // 或 ByPolygonVertex, ByVertex 等
+                ReferenceMode = ReferenceMode.Direct
+            };
+
+            // 添加一个 Bitangent/Binormal 向量 (对应唯一的那个多边形)
+            bitangentLayer.Binormals.AddRange(new List<XYZ>
+            {
+                new XYZ(-1, 0.0, 0.0), new XYZ(1, 0.0, 0.0),
+                new XYZ(-1, 0.0, 0.0), new XYZ(1, 0.0, 0.0),
+                new XYZ(-1, 0.0, 0.0), new XYZ(1, 0.0, 0.0)
+            });
+
+            // 5. 将 Bitangent 层添加到网格中
+            rectMesh.Layers.Add(bitangentLayer);
+
             Node meshNode = new Node { Name = "SkinnedRectangleNode" };
             meshNode.Transform.Translation = new XYZ(0, 0, 0); // Mesh node at world origin LOCAL transform
             scene.RootNode.AddChildNode(meshNode); // **** CHANGED: Mesh is child of Scene Root ****

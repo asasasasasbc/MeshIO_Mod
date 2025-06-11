@@ -15,6 +15,8 @@ namespace MeshIO.FBX.Extensions
 					return "LayerElementUV";
                 case LayerElementTangent: // <<<< ADD THIS CASE
                     return "LayerElementTangent";
+                case LayerElementBinormal: // <<<< Added this Case for binormal!
+                    return "LayerElementBinormal";
                 case LayerElementMaterial: // Assuming you might add this later or already have it
                     return "LayerElementMaterial";
                 case LayerElementSmoothing: // Assuming you might add this later
